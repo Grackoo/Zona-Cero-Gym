@@ -22,6 +22,7 @@ export interface AccessLog {
   type: 'Entrada' | 'Salida';
   status: 'Permitido' | 'Denegado';
   reason: string;
+  similarity: number;
 }
 
 const STORAGE_MEMBERS_KEY = 'zona_cero_biometric_members_v1';
@@ -96,7 +97,8 @@ const INITIAL_LOGS: AccessLog[] = [
     timeFormatted: '08:42 AM',
     type: 'Entrada',
     status: 'Permitido',
-    reason: 'Membresía Activa - Reconocimiento Facial 98%'
+    similarity: 98.4,
+    reason: 'Membresía Activa - Coincidencia Facial 98.4% (>= 95% Requerido)'
   },
   {
     id: 'LOG-9002',
@@ -108,7 +110,8 @@ const INITIAL_LOGS: AccessLog[] = [
     timeFormatted: '08:15 AM',
     type: 'Salida',
     status: 'Permitido',
-    reason: 'Membresía Activa - Reconocimiento Facial 99%'
+    similarity: 99.1,
+    reason: 'Membresía Activa - Coincidencia Facial 99.1% (>= 95% Requerido)'
   }
 ];
 
@@ -149,6 +152,13 @@ export const biometricsStore = {
     window.dispatchEvent(new CustomEvent('zona_cero_members_updated'));
   },
 
+  deleteMember(id: string): void {
+    const members = this.getMembers();
+    const updated = members.filter(m => m.id !== id);
+    localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(updated));
+    window.dispatchEvent(new CustomEvent('zona_cero_members_updated'));
+  },
+
   getAccessLogs(): AccessLog[] {
     try {
       const data = localStorage.getItem(STORAGE_LOGS_KEY);
@@ -162,7 +172,11 @@ export const biometricsStore = {
     }
   },
 
-  registerAccess(memberId: string, type: 'Entrada' | 'Salida' = 'Entrada'): { success: boolean; log: AccessLog; member?: BiometricMember } {
+  registerAccess(
+    memberId: string, 
+    type: 'Entrada' | 'Salida' = 'Entrada',
+    forcedSimilarity?: number
+  ): { success: boolean; log: AccessLog; member?: BiometricMember; similarity: number } {
     const members = this.getMembers();
     const member = members.find(m => m.id === memberId);
 
@@ -172,6 +186,7 @@ export const biometricsStore = {
     const timeFormatted = `${hours}:${minutes} ${now.getHours() >= 12 ? 'PM' : 'AM'}`;
 
     if (!member) {
+      const similarity = forcedSimilarity ?? parseFloat((Math.random() * 40 + 30).toFixed(1));
       const log: AccessLog = {
         id: `LOG-${Date.now()}`,
         memberId: 'DESCONOCIDO',
@@ -182,15 +197,32 @@ export const biometricsStore = {
         timeFormatted,
         type,
         status: 'Denegado',
-        reason: 'Rostro no encontrado en el sistema'
+        similarity,
+        reason: `Rostro no encontrado en el sistema (${similarity}% efectividad)`
       };
       const logs = [log, ...this.getAccessLogs()].slice(0, 50);
       localStorage.setItem(STORAGE_LOGS_KEY, JSON.stringify(logs));
       window.dispatchEvent(new CustomEvent('zona_cero_access_updated'));
-      return { success: false, log };
+      return { success: false, log, similarity };
     }
 
-    const isPermitted = member.status === 'Activo';
+    // Determine biometric similarity (defaults to 95.2% - 99.8%, or can be lower if testing)
+    const similarity = forcedSimilarity ?? parseFloat((95.1 + Math.random() * 4.7).toFixed(1));
+    
+    // Strict > 95% threshold requirement
+    const meetsBiometricThreshold = similarity >= 95.0;
+    const isPlanActive = member.status === 'Activo';
+    const isAuthorized = meetsBiometricThreshold && isPlanActive;
+
+    let reason = '';
+    if (!meetsBiometricThreshold) {
+      reason = `Similitud insuficiente (${similarity}% < 95.0% requerido)`;
+    } else if (!isPlanActive) {
+      reason = `Acceso Denegado: Membresía en estado '${member.status}' (Efectividad ${similarity}%)`;
+    } else {
+      reason = `Membresía Activa - Coincidencia Facial ${similarity}% (Efectividad > 95% Cumplida)`;
+    }
+
     const log: AccessLog = {
       id: `LOG-${Date.now()}`,
       memberId: member.id,
@@ -200,20 +232,20 @@ export const biometricsStore = {
       timestamp: now.toISOString(),
       timeFormatted,
       type,
-      status: isPermitted ? 'Permitido' : 'Denegado',
-      reason: isPermitted 
-        ? `Membresía Activa - Rostro validado (${Math.floor(95 + Math.random() * 5)}%)` 
-        : `Acceso Denegado: Membresía en estado '${member.status}'`
+      status: isAuthorized ? 'Permitido' : 'Denegado',
+      similarity,
+      reason
     };
 
-    // Update member's last visit
-    this.updateMember(member.id, { lastVisit: `Hoy, ${timeFormatted}` });
+    if (isAuthorized) {
+      this.updateMember(member.id, { lastVisit: `Hoy, ${timeFormatted}` });
+    }
 
     const logs = [log, ...this.getAccessLogs()].slice(0, 50);
     localStorage.setItem(STORAGE_LOGS_KEY, JSON.stringify(logs));
     window.dispatchEvent(new CustomEvent('zona_cero_access_updated'));
 
-    return { success: isPermitted, log, member };
+    return { success: isAuthorized, log, member, similarity };
   },
 
   clearLogs(): void {

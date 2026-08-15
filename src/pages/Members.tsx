@@ -7,10 +7,11 @@ import {
   Users, 
   CheckCircle, 
   TrendingUp, 
-  MoreVertical, 
+  Trash2, 
   Filter, 
   UserPlus, 
-  ScanFace 
+  ScanFace,
+  AlertTriangle 
 } from 'lucide-react';
 
 export default function Members() {
@@ -19,6 +20,7 @@ export default function Members() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('Todos');
   const [planFilter, setPlanFilter] = useState('Todos');
+  const [memberToDelete, setMemberToDelete] = useState<BiometricMember | null>(null);
 
   useEffect(() => {
     setMembers(biometricsStore.getMembers());
@@ -37,6 +39,11 @@ export default function Members() {
   });
 
   const activeCount = members.filter(m => m.status === 'Activo').length;
+
+  const handleDelete = (member: BiometricMember) => {
+    biometricsStore.deleteMember(member.id);
+    setMemberToDelete(null);
+  };
 
   return (
     <div className="h-full flex flex-col overflow-y-auto bg-cero-bg">
@@ -135,7 +142,7 @@ export default function Members() {
                   <th className="px-6 py-4 font-medium">Tipo de Plan</th>
                   <th className="px-6 py-4 font-medium">Estado</th>
                   <th className="px-6 py-4 font-medium">Última Visita</th>
-                  <th className="px-6 py-4 font-medium text-right">Acción</th>
+                  <th className="px-6 py-4 font-medium text-right">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-cero-border bg-cero-bg/30">
@@ -171,13 +178,23 @@ export default function Members() {
                       </td>
                       <td className="px-6 py-4 text-gray-300">{member.lastVisit || 'Hoy'}</td>
                       <td className="px-6 py-4 text-right">
-                        <button 
-                          onClick={() => navigate('/access')}
-                          className="text-xs bg-[#1e293b] hover:bg-cero-lime hover:text-black text-white px-3 py-1.5 rounded-lg border border-cero-border transition-all cursor-pointer inline-flex items-center gap-1"
-                        >
-                          <ScanFace size={13} />
-                          Acceso
-                        </button>
+                        <div className="flex items-center justify-end gap-2">
+                          <button 
+                            onClick={() => navigate('/access')}
+                            className="text-xs bg-[#1e293b] hover:bg-cero-lime hover:text-black text-white px-3 py-1.5 rounded-lg border border-cero-border transition-all cursor-pointer inline-flex items-center gap-1"
+                            title="Ir al escáner facial"
+                          >
+                            <ScanFace size={13} />
+                            Acceso
+                          </button>
+                          <button 
+                            onClick={() => setMemberToDelete(member)}
+                            className="p-1.5 text-cero-text-muted hover:text-rose-400 hover:bg-rose-500/10 border border-transparent hover:border-rose-500/20 rounded-lg transition-colors cursor-pointer"
+                            title={`Eliminar a ${member.fullName}`}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -191,6 +208,50 @@ export default function Members() {
             <div>Mostrando {filteredMembers.length} de {members.length} miembros registrados</div>
           </div>
         </div>
+
+        {/* Delete Confirmation Modal */}
+        {memberToDelete && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn">
+            <div className="bg-cero-panel border border-rose-500/40 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-5">
+              <div className="flex items-center gap-3 text-rose-400">
+                <div className="p-3 bg-rose-500/10 rounded-xl border border-rose-500/30">
+                  <AlertTriangle size={24} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">¿Eliminar Miembro?</h3>
+                  <p className="text-xs text-cero-text-muted">Esta acción borrará sus datos personales y registro biométrico.</p>
+                </div>
+              </div>
+
+              <div className="p-4 bg-[#10161c] border border-cero-border rounded-xl flex items-center gap-4">
+                <img 
+                  src={memberToDelete.avatarUrl} 
+                  alt={memberToDelete.fullName} 
+                  className="w-12 h-12 rounded-xl object-cover border border-cero-border"
+                />
+                <div>
+                  <p className="text-sm font-bold text-white">{memberToDelete.fullName}</p>
+                  <p className="text-xs text-cero-text-muted">ID: {memberToDelete.id} • Plan: {memberToDelete.planType}</p>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  onClick={() => setMemberToDelete(null)}
+                  className="px-4 py-2.5 border border-cero-border text-white text-sm font-semibold rounded-xl hover:bg-[#1e293b] transition-colors cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={() => handleDelete(memberToDelete)}
+                  className="bg-rose-500 hover:bg-rose-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold transition-colors flex items-center gap-2 cursor-pointer shadow-lg"
+                >
+                  <Trash2 size={16} /> Confirmar Eliminación
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
       </div>
     </div>
