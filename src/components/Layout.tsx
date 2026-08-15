@@ -31,7 +31,7 @@ export default function Layout() {
         {/* Logo Area */}
         <div className="p-6 pb-4">
           <div className="flex items-center gap-3 mb-6">
-            <img src="/Image%202.png" alt="ZONA CERO Logo" className="h-8 w-auto object-contain bg-white rounded-sm" />
+            <img src="/logo.svg" alt="ZONA CERO Logo" className="h-8 w-auto object-contain" />
             <div className="hidden text-xl font-bold text-cero-lime tracking-tight">ZONA CERO</div>
             <div>
               <h1 className="text-cero-lime font-bold text-lg leading-tight tracking-wide">ZONA CERO</h1>
