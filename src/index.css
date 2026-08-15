@@ -1,12 +1,12 @@
 @import "tailwindcss";
 
 @theme {
-  --color-cero-bg: #0d1217;
-  --color-cero-panel: #161f28;
-  --color-cero-lime: #d4ff00;
-  --color-cero-lime-hover: #b8de00;
-  --color-cero-text-muted: #8b9bb4;
-  --color-cero-border: #23303f;
+  --color-cero-bg: #02111c;
+  --color-cero-panel: #0a2233;
+  --color-cero-lime: #ffffff;
+  --color-cero-lime-hover: #e2e8f0;
+  --color-cero-text-muted: #82a5c0;
+  --color-cero-border: #143d59;
 }
 
 body {

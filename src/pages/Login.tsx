@@ -20,7 +20,7 @@ export default function Login() {
 
       <div className="z-20 w-full max-w-md p-8 bg-[#0f172a]/80 backdrop-blur-xl rounded-2xl border border-cero-border shadow-2xl">
         <div className="flex flex-col items-center mb-10">
-          <img src="/logo.svg" alt="ZONA CERO Logo" className="h-16 w-auto mb-4" />
+          <img src="/logo.jpg" alt="ZONA CERO Logo" className="h-16 w-auto mb-4 rounded-md" />
           <h1 className="text-2xl font-bold text-white tracking-tight">Panel de Control</h1>
           <p className="text-cero-text-muted text-sm mt-2">Inicia sesión en tu cuenta</p>
         </div>
