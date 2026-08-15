@@ -6,6 +6,10 @@ import {
   AccessLog 
 } from '../lib/biometricsStore';
 import { 
+  matchLiveVideoAgainstMembers, 
+  MatchResult 
+} from '../lib/faceMatcher';
+import { 
   Camera, 
   CameraOff, 
   ScanFace, 
@@ -35,7 +39,8 @@ import {
   Unlock,
   EyeOff,
   Sun,
-  Eye
+  Eye,
+  Gauge
 } from 'lucide-react';
 
 const SAMPLE_AVATARS = [
@@ -46,14 +51,6 @@ const SAMPLE_AVATARS = [
   { label: 'Rostro 5 (Miembro M)', url: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&q=80&w=250&h=250' },
   { label: 'Rostro 6 (Miembro F)', url: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&q=80&w=250&h=250' },
 ];
-
-interface FrameAnalysisResult {
-  isCoveredOrDark: boolean;
-  brightness: number;
-  contrast: number;
-  hasFacePresence: boolean;
-  message: string;
-}
 
 export default function AccessControl() {
   const [members, setMembers] = useState<BiometricMember[]>([]);
@@ -68,13 +65,10 @@ export default function AccessControl() {
   const [continuousMode, setContinuousMode] = useState(true);
   const [scanningStatusText, setScanningStatusText] = useState('ESCANEO CONTINUO ACTIVO');
   
-  // Real-time Computer Vision Frame Analysis
+  // Real-time Computer Vision Match Live Stats
+  const [liveSimScore, setLiveSimScore] = useState<number>(0);
   const [cameraCoveredAlert, setCameraCoveredAlert] = useState(false);
-  const [currentFrameStats, setCurrentFrameStats] = useState<{
-    brightness: number;
-    hasFace: boolean;
-    isCovered: boolean;
-  }>({ brightness: 0, hasFace: false, isCovered: false });
+  const [noFaceDetectedAlert, setNoFaceDetectedAlert] = useState(false);
 
   const [scanResult, setScanResult] = useState<{
     member?: BiometricMember;
@@ -133,117 +127,16 @@ export default function AccessControl() {
     setLogs(biometricsStore.getAccessLogs());
   };
 
-  // Real-time Computer Vision Frame Analyzer (analyzes brightness, variance, skin-tone texture)
-  const analyzeCameraFrame = useCallback((): FrameAnalysisResult => {
-    const video = videoRef.current;
-    if (!video || video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
-      return {
-        isCoveredOrDark: true,
-        brightness: 0,
-        contrast: 0,
-        hasFacePresence: false,
-        message: 'Cámara apagada o sin señal de video'
-      };
-    }
-
-    try {
-      const sampleCanvas = document.createElement('canvas');
-      sampleCanvas.width = 80;
-      sampleCanvas.height = 60;
-      const ctx = sampleCanvas.getContext('2d', { willReadFrequently: true });
-      if (!ctx) {
-        return {
-          isCoveredOrDark: false,
-          brightness: 60,
-          contrast: 20,
-          hasFacePresence: true,
-          message: 'Analizando...'
-        };
-      }
-
-      ctx.drawImage(video, 0, 0, 80, 60);
-      const imgData = ctx.getImageData(0, 0, 80, 60);
-      const data = imgData.data;
-      const totalPixels = data.length / 4;
-
-      let totalLuminance = 0;
-      let skinTonePixels = 0;
-      const lumas: number[] = [];
-
-      for (let i = 0; i < data.length; i += 4) {
-        const r = data[i];
-        const g = data[i + 1];
-        const b = data[i + 2];
-
-        // Perceived luminance formula (ITU-R BT.709)
-        const luma = 0.299 * r + 0.587 * g + 0.114 * b;
-        totalLuminance += luma;
-        lumas.push(luma);
-
-        // Skin-tone pixel heuristic
-        const maxVal = Math.max(r, g, b);
-        const minVal = Math.min(r, g, b);
-        if (r > 40 && g > 25 && b > 15 && r > g && r > b && (maxVal - minVal) > 10 && Math.abs(r - g) > 8) {
-          skinTonePixels++;
-        }
-      }
-
-      const avgLuminance = totalLuminance / totalPixels;
-      const brightnessPercent = Math.min(100, Math.round((avgLuminance / 255) * 100));
-
-      // Standard deviation of luminance
-      let varianceSum = 0;
-      for (const l of lumas) {
-        varianceSum += Math.pow(l - avgLuminance, 2);
-      }
-      const stdDev = Math.sqrt(varianceSum / totalPixels);
-
-      // Camera Covered or Obstructed or Pitch Dark conditions:
-      // 1. Average luminance is lower than 30 (out of 255) -> covered with hand/tape/cloth/darkness
-      // 2. Or stdDev is extremely low (< 5.0) -> solid uniform surface covering lens
-      const isCovered = avgLuminance < 32 || stdDev < 5.0;
-      const skinRatio = skinTonePixels / totalPixels;
-
-      // Face presence requires active lighting, sufficient texture, and facial skin-tone distribution
-      const hasFacePresence = !isCovered && avgLuminance >= 32 && stdDev >= 7.5 && skinRatio > 0.06;
-
-      let message = 'Enfocando rostro...';
-      if (isCovered || avgLuminance < 32) {
-        message = 'CÁMARA TAPADA O SIN LUZ (ACCESO BLOQUEADO)';
-      } else if (!hasFacePresence) {
-        message = 'BUSCANDO ROSTRO EN EL RECUADRO...';
-      } else {
-        message = 'ROSTRO EN ENCUADRE DETECTADO';
-      }
-
-      return {
-        isCoveredOrDark: isCovered,
-        brightness: brightnessPercent,
-        contrast: Math.round(stdDev),
-        hasFacePresence,
-        message
-      };
-    } catch {
-      return {
-        isCoveredOrDark: false,
-        brightness: 50,
-        contrast: 20,
-        hasFacePresence: true,
-        message: 'Analizando...'
-      };
-    }
-  }, []);
-
-  // Continuous auto-scanning loop
+  // Continuous auto-scanning loop that ACTUALLY compares live camera frames
   useEffect(() => {
     if (activeTab === 'scanner' && continuousMode) {
       if (continuousTimerRef.current) clearInterval(continuousTimerRef.current);
 
-      continuousTimerRef.current = window.setInterval(() => {
+      continuousTimerRef.current = window.setInterval(async () => {
         if (!isProcessingRef.current) {
-          triggerAutoScan();
+          await runRealLiveComparison();
         }
-      }, 3000);
+      }, 2800);
     } else {
       if (continuousTimerRef.current) clearInterval(continuousTimerRef.current);
     }
@@ -251,7 +144,7 @@ export default function AccessControl() {
     return () => {
       if (continuousTimerRef.current) clearInterval(continuousTimerRef.current);
     };
-  }, [activeTab, continuousMode, accessType, members, analyzeCameraFrame]);
+  }, [activeTab, continuousMode, accessType, members]);
 
   // Start webcam
   const startCamera = async (targetVideoRef: React.RefObject<HTMLVideoElement | null>) => {
@@ -271,7 +164,7 @@ export default function AccessControl() {
       setIsCameraActive(true);
     } catch (err: any) {
       console.warn('Camera access:', err);
-      setCameraError(err.message || 'Permiso de cámara no concedido. Funcionando en modo biométrico asistido.');
+      setCameraError(err.message || 'Permiso de cámara no concedido.');
       setIsCameraActive(false);
     }
   };
@@ -320,69 +213,68 @@ export default function AccessControl() {
     }
   };
 
-  // Automated continuous face detection WITH REAL FRAME VERIFICATION
-  const triggerAutoScan = () => {
+  // REAL REAL-TIME VISION FRAME COMPARISON
+  const runRealLiveComparison = async () => {
+    const video = videoRef.current;
+    if (!isCameraActive || !video) return;
+
     const currentMembers = biometricsStore.getMembers();
     if (currentMembers.length === 0) return;
 
-    // REAL CAMERA FRAME CHECK: Check if camera is covered or dark
-    if (isCameraActive && videoRef.current) {
-      const frameAnalysis = analyzeCameraFrame();
-      setCurrentFrameStats({
-        brightness: frameAnalysis.brightness,
-        hasFace: frameAnalysis.hasFacePresence,
-        isCovered: frameAnalysis.isCoveredOrDark
-      });
+    // Run mathematical image comparison between live video and enrolled members
+    const match = await matchLiveVideoAgainstMembers(video, currentMembers);
+    setLiveSimScore(match.similarity);
 
-      if (frameAnalysis.isCoveredOrDark) {
-        setCameraCoveredAlert(true);
-        setScanningStatusText('⚠️ CÁMARA TAPADA / SIN LUZ (ACCESO BLOQUEADO)');
-        return; // DO NOT REGISTER ANY ACCESS! CAMERA IS COVERED!
-      } else {
-        setCameraCoveredAlert(false);
-      }
-
-      if (!frameAnalysis.hasFacePresence) {
-        setScanningStatusText('BUSCANDO ROSTRO EN EL RECUADRO...');
-        return; // No face in front of camera
-      }
+    // 1. If camera is covered or dark
+    if (match.isCovered) {
+      setCameraCoveredAlert(true);
+      setNoFaceDetectedAlert(false);
+      setScanningStatusText('⚠️ CÁMARA TAPADA O SIN LUZ (ACCESO BLOQUEADO)');
+      return; // Do NOT log or authorize
+    } else {
+      setCameraCoveredAlert(false);
     }
 
-    isProcessingRef.current = true;
-    setIsScanning(true);
-    setScanningStatusText('ROSTRO EN ENCUADRE DETECTADO • ANALIZANDO VECTOR');
+    // 2. If object is not a human face (hand, watch, clothes, empty background)
+    if (!match.isFacePresent) {
+      setNoFaceDetectedAlert(true);
+      setScanningStatusText('BUSCANDO ROSTRO EN EL ENCUADRE...');
+      return; // Do NOT log or authorize
+    } else {
+      setNoFaceDetectedAlert(false);
+    }
 
-    setTimeout(() => {
-      // Pick a random member from registered database
-      const randomMember = currentMembers[Math.floor(Math.random() * currentMembers.length)];
+    // 3. Face IS detected: Check if it matches any registered member with > 95%
+    if (match.similarity < 95.0) {
+      // Hand or unknown face or different person: low similarity!
+      setScanningStatusText(`ROSTRO NO RECONOCIDO (${match.similarity}% < 95.0% REQUERIDO)`);
       
-      // Calculate realistic similarity score (>95% for registered face)
-      const similarity = parseFloat((95.4 + Math.random() * 4.3).toFixed(1));
-      
-      const result = biometricsStore.registerAccess(randomMember.id, accessType, similarity);
+      // We only log a rejection if it was a high-confidence non-match or manual trigger, 
+      // but we do NOT authorize entry under any circumstance!
+      return;
+    }
+
+    // 4. True match with >= 95.0% similarity!
+    if (match.bestMemberId) {
+      isProcessingRef.current = true;
+      setIsScanning(true);
+      setScanningStatusText(`¡ROSTRO AUTORIZADO! (${match.similarity}% > 95%)`);
+
+      const result = biometricsStore.registerAccess(match.bestMemberId, accessType, match.similarity);
       setScanResult(result);
       setIsScanning(false);
-      setScanningStatusText('ESCANEO CONTINUO ACTIVO');
 
+      // Cooldown before next check-in
       setTimeout(() => {
         isProcessingRef.current = false;
-      }, 2500);
-    }, 1000);
+        setScanningStatusText('ESCANEO CONTINUO ACTIVO');
+      }, 3500);
+    }
   };
 
-  // Manual specific face scan test
+  // Manual test trigger (allows explicitly testing >95% match or <95% rejection)
   const triggerFacialScan = (forcedMember?: BiometricMember, customSimilarity?: number) => {
     if (isScanning) return;
-
-    // Check camera cover state on manual trigger as well
-    if (isCameraActive && videoRef.current) {
-      const frameAnalysis = analyzeCameraFrame();
-      if (frameAnalysis.isCoveredOrDark) {
-        setCameraCoveredAlert(true);
-        setScanningStatusText('⚠️ CÁMARA TAPADA / SIN LUZ (ACCESO BLOQUEADO)');
-        return;
-      }
-    }
 
     isProcessingRef.current = true;
     setIsScanning(true);
@@ -398,27 +290,29 @@ export default function AccessControl() {
       setScanningStatusText('ESCANEO CONTINUO ACTIVO');
 
       let targetMember = forcedMember;
-      if (!targetMember) {
+      if (!targetMember && customSimilarity && customSimilarity >= 95.0) {
         const available = biometricsStore.getMembers();
         if (available.length > 0) {
-          targetMember = available[Math.floor(Math.random() * available.length)];
+          targetMember = available[0];
         }
       }
 
-      if (targetMember) {
-        const sim = customSimilarity ?? parseFloat((95.5 + Math.random() * 4.2).toFixed(1));
+      if (targetMember && (!customSimilarity || customSimilarity >= 95.0)) {
+        const sim = customSimilarity ?? parseFloat((96.4 + Math.random() * 3.3).toFixed(1));
         const result = biometricsStore.registerAccess(targetMember.id, accessType, sim);
         setScanResult(result);
+        setLiveSimScore(sim);
       } else {
         const sim = customSimilarity ?? parseFloat((84.0 + Math.random() * 8.0).toFixed(1));
         const result = biometricsStore.registerAccess('UNKNOWN', accessType, sim);
         setScanResult(result);
+        setLiveSimScore(sim);
       }
 
       setTimeout(() => {
         isProcessingRef.current = false;
       }, 1500);
-    }, 900);
+    }, 800);
   };
 
   // Delete Member Confirmation
@@ -472,7 +366,7 @@ export default function AccessControl() {
       {/* Top Header */}
       <PageHeader 
         title="Control de Acceso Biométrico" 
-        subtitle="Registro de entrada/salida y reconocimiento facial continuo (> 95% efectividad requerida)."
+        subtitle="Comparación facial en tiempo real • Autorización estricta > 95.0% de coincidencia."
       >
         <div className="flex items-center gap-3 ml-auto">
           {/* Navigation Tabs */}
@@ -524,25 +418,31 @@ export default function AccessControl() {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-sm font-bold text-white">Validación de Visión y Seguridad Biométrica</span>
+                <span className="text-sm font-bold text-white">Algoritmo de Comparación Estructural en Tiempo Real</span>
                 <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 font-mono text-[11px] font-bold rounded-full border border-emerald-500/30">
-                  UMBRAL: {">"} 95.0%
+                  REQUISITO: {">"} 95.0%
                 </span>
               </div>
               <p className="text-xs text-cero-text-muted mt-0.5">
-                El torniquete analiza la cámara en vivo. Si el lente está tapado o no detecta rostro real, <strong>el acceso se bloquea automáticamente</strong>.
+                La cámara compara el rostro en vivo contra la fotografía guardada. Manos, relojes o personas no registradas son <strong>rechazadas por similitud insuficiente</strong>.
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-3 text-xs font-mono">
+            {/* Live calculated similarity gauge */}
+            <div className="flex items-center gap-1.5 px-3 py-1 bg-cero-bg border border-cero-border rounded-lg text-white font-bold">
+              <Gauge size={14} className="text-cero-lime" />
+              <span>Similitud en Vivo: <strong className={liveSimScore >= 95 ? 'text-emerald-400' : 'text-rose-400'}>{liveSimScore}%</strong></span>
+            </div>
+
             {cameraCoveredAlert ? (
               <span className="px-3 py-1 bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-lg flex items-center gap-1.5 font-bold animate-pulse">
-                <EyeOff size={14} /> CÁMARA OBSTRUIDA
+                <EyeOff size={14} /> CÁMARA TAPADA
               </span>
             ) : (
               <span className="px-3 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-lg flex items-center gap-1.5 font-bold">
-                <Eye size={14} /> VISIÓN ACTIVA
+                <Eye size={14} /> ENFOCANDO
               </span>
             )}
           </div>
@@ -591,7 +491,7 @@ export default function AccessControl() {
               </div>
             </div>
             <div className="text-3xl font-bold text-rose-400">{denegadosHoy}</div>
-            <span className="text-xs text-rose-400/80 font-medium mt-1 inline-block">{"<"} 95% similitud, cámara tapada o vencidos</span>
+            <span className="text-xs text-rose-400/80 font-medium mt-1 inline-block">{"<"} 95% similitud, manos o no registrados</span>
           </div>
         </div>
 
@@ -615,7 +515,7 @@ export default function AccessControl() {
                           AUTOMÁTICO
                         </span>
                       </h2>
-                      <p className="text-xs text-cero-text-muted">Análisis continuo en vivo • Reconocimiento instantáneo</p>
+                      <p className="text-xs text-cero-text-muted">Comparación visual instantánea con vectores faciales</p>
                     </div>
                   </div>
 
@@ -663,6 +563,8 @@ export default function AccessControl() {
                 <div className={`relative h-80 sm:h-96 bg-[#020b12] rounded-2xl border-2 overflow-hidden flex items-center justify-center group shadow-inner transition-colors ${
                   cameraCoveredAlert 
                     ? 'border-rose-500/70' 
+                    : liveSimScore >= 95 
+                    ? 'border-emerald-400 shadow-[0_0_25px_rgba(52,211,153,0.3)]'
                     : 'border-cero-border/80'
                 }`}>
                   
@@ -690,12 +592,12 @@ export default function AccessControl() {
 
                   {/* Camera Covered Overlay Alert */}
                   {cameraCoveredAlert && (
-                    <div className="absolute inset-0 bg-rose-950/80 backdrop-blur-xs z-30 flex flex-col items-center justify-center p-6 text-center animate-fadeIn">
+                    <div className="absolute inset-0 bg-rose-950/85 backdrop-blur-xs z-30 flex flex-col items-center justify-center p-6 text-center animate-fadeIn">
                       <div className="p-3 bg-rose-500/20 border border-rose-500/40 rounded-full text-rose-400 mb-3 animate-bounce">
                         <EyeOff size={32} />
                       </div>
                       <h3 className="text-lg font-black text-white uppercase tracking-wide">
-                        Lente de Cámara Obstruido o Sin Luz
+                        Lente Obstruido o Sin Luz
                       </h3>
                       <p className="text-xs text-rose-200 mt-1 max-w-sm">
                         No se detecta imagen ni iluminación suficiente. Destape la cámara y colóquese frente al lente para que el sistema autorice el acceso.
@@ -710,13 +612,15 @@ export default function AccessControl() {
                   <div className={`relative z-10 w-56 h-68 border-2 border-dashed rounded-3xl flex flex-col items-center justify-between p-4 pointer-events-none transition-colors ${
                     cameraCoveredAlert 
                       ? 'border-rose-500/60 shadow-[0_0_35px_rgba(244,63,94,0.15)]' 
+                      : liveSimScore >= 95
+                      ? 'border-emerald-400 shadow-[0_0_35px_rgba(52,211,153,0.3)]'
                       : 'border-cero-lime/60 shadow-[0_0_35px_rgba(255,255,255,0.09)]'
                   }`}>
                     {/* Corner Reticles */}
-                    <div className={`absolute -top-1 -left-1 w-6 h-6 border-t-4 border-l-4 rounded-tl-lg ${cameraCoveredAlert ? 'border-rose-500' : 'border-cero-lime'}`}></div>
-                    <div className={`absolute -top-1 -right-1 w-6 h-6 border-t-4 border-r-4 rounded-tr-lg ${cameraCoveredAlert ? 'border-rose-500' : 'border-cero-lime'}`}></div>
-                    <div className={`absolute -bottom-1 -left-1 w-6 h-6 border-b-4 border-l-4 rounded-bl-lg ${cameraCoveredAlert ? 'border-rose-500' : 'border-cero-lime'}`}></div>
-                    <div className={`absolute -bottom-1 -right-1 w-6 h-6 border-b-4 border-r-4 rounded-br-lg ${cameraCoveredAlert ? 'border-rose-500' : 'border-cero-lime'}`}></div>
+                    <div className={`absolute -top-1 -left-1 w-6 h-6 border-t-4 border-l-4 rounded-tl-lg ${cameraCoveredAlert ? 'border-rose-500' : liveSimScore >= 95 ? 'border-emerald-400' : 'border-cero-lime'}`}></div>
+                    <div className={`absolute -top-1 -right-1 w-6 h-6 border-t-4 border-r-4 rounded-tr-lg ${cameraCoveredAlert ? 'border-rose-500' : liveSimScore >= 95 ? 'border-emerald-400' : 'border-cero-lime'}`}></div>
+                    <div className={`absolute -bottom-1 -left-1 w-6 h-6 border-b-4 border-l-4 rounded-bl-lg ${cameraCoveredAlert ? 'border-rose-500' : liveSimScore >= 95 ? 'border-emerald-400' : 'border-cero-lime'}`}></div>
+                    <div className={`absolute -bottom-1 -right-1 w-6 h-6 border-b-4 border-r-4 rounded-br-lg ${cameraCoveredAlert ? 'border-rose-500' : liveSimScore >= 95 ? 'border-emerald-400' : 'border-cero-lime'}`}></div>
 
                     {/* Animated Scanning Beam */}
                     {!cameraCoveredAlert && (
@@ -782,13 +686,13 @@ export default function AccessControl() {
                   {/* Manual Quick Scan button */}
                   <button
                     disabled={isScanning || cameraCoveredAlert}
-                    onClick={() => triggerFacialScan()}
+                    onClick={() => runRealLiveComparison()}
                     className={`bg-cero-lime hover:bg-cero-lime-hover text-black px-6 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center gap-2 shadow-lg cursor-pointer active:scale-95 ${
                       isScanning || cameraCoveredAlert ? 'opacity-50 cursor-not-allowed' : ''
                     }`}
                   >
                     <Zap size={18} />
-                    {isScanning ? 'Analizando...' : 'Escanear de Inmediato'}
+                    {isScanning ? 'Analizando...' : 'Comparar Fotograma Ahora'}
                   </button>
                 </div>
 
@@ -797,7 +701,7 @@ export default function AccessControl() {
                   <div className="flex items-center justify-between mb-3">
                     <span className="text-xs font-mono text-cero-text-muted uppercase tracking-wider flex items-center gap-1.5">
                       <Sparkles size={14} className="text-cero-lime" />
-                      Prueba Manual de Reconocimiento y Validación de Regla:
+                      Prueba Manual de Validación y Simulación de Torniquete:
                     </span>
                   </div>
 
@@ -807,7 +711,7 @@ export default function AccessControl() {
                         key={member.id}
                         onClick={() => triggerFacialScan(member, parseFloat((96.0 + Math.random() * 3.8).toFixed(1)))}
                         className="p-2 bg-[#10161c] hover:bg-[#1e293b] border border-cero-border hover:border-cero-lime/50 rounded-xl transition-all flex items-center gap-2.5 cursor-pointer text-left group"
-                        title={`Probar acceso de ${member.fullName} (>95%)`}
+                        title={`Simular coincidencia exacta de ${member.fullName} (>95%)`}
                       >
                         <img 
                           src={member.avatarUrl} 
@@ -827,7 +731,7 @@ export default function AccessControl() {
 
                     {/* Low confidence (< 95%) Test Button */}
                     <button
-                      onClick={() => triggerFacialScan(undefined, 88.5)}
+                      onClick={() => triggerFacialScan(undefined, 42.5)}
                       className="p-2 bg-rose-950/30 hover:bg-rose-950/60 border border-rose-500/30 hover:border-rose-500/60 rounded-xl transition-all flex items-center gap-2.5 cursor-pointer text-left"
                       title="Probar rechazo por baja similitud (<95%)"
                     >
@@ -836,7 +740,7 @@ export default function AccessControl() {
                       </div>
                       <div className="overflow-hidden">
                         <p className="text-xs font-semibold text-rose-300 truncate">
-                          Similitud 88.5%
+                          Similitud 42.5%
                         </p>
                         <p className="text-[10px] text-rose-400 font-mono">
                           Rechazo Auto
@@ -991,7 +895,7 @@ export default function AccessControl() {
 
                 <div className="mt-auto pt-4 border-t border-cero-border text-center">
                   <span className="text-xs text-cero-text-muted">
-                    Validación continua en segundo plano • Mínimo 95.0%
+                    Comparación estructural facial en segundo plano • Mínimo 95.0%
                   </span>
                 </div>
               </div>
