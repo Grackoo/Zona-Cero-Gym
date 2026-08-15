@@ -34,11 +34,9 @@ import {
   Trash2,
   Play,
   Pause,
-  Percent,
   Lock,
   Unlock,
   EyeOff,
-  Sun,
   Eye,
   Gauge
 } from 'lucide-react';
@@ -61,14 +59,13 @@ export default function AccessControl() {
   // Live scanner states
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [isScanning, setIsScanning] = useState(false);
   const [continuousMode, setContinuousMode] = useState(true);
   const [scanningStatusText, setScanningStatusText] = useState('ESCANEO CONTINUO ACTIVO');
   
   // Real-time Computer Vision Match Live Stats
   const [liveSimScore, setLiveSimScore] = useState<number>(0);
   const [cameraCoveredAlert, setCameraCoveredAlert] = useState(false);
-  const [noFaceDetectedAlert, setNoFaceDetectedAlert] = useState(false);
+  const [detectedCandidate, setDetectedCandidate] = useState<string | null>(null);
 
   const [scanResult, setScanResult] = useState<{
     member?: BiometricMember;
@@ -98,7 +95,7 @@ export default function AccessControl() {
   const registerVideoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const continuousTimerRef = useRef<number | null>(null);
-  const isProcessingRef = useRef(false);
+  const isCooldownRef = useRef(false);
 
   // Auto request camera on module load
   useEffect(() => {
@@ -127,16 +124,16 @@ export default function AccessControl() {
     setLogs(biometricsStore.getAccessLogs());
   };
 
-  // Continuous auto-scanning loop that ACTUALLY compares live camera frames
+  // Continuous auto-scanning loop (Smooth real-time comparison every 700ms)
   useEffect(() => {
     if (activeTab === 'scanner' && continuousMode) {
       if (continuousTimerRef.current) clearInterval(continuousTimerRef.current);
 
       continuousTimerRef.current = window.setInterval(async () => {
-        if (!isProcessingRef.current) {
-          await runRealLiveComparison();
+        if (!isCooldownRef.current) {
+          await runContinuousFrameCheck();
         }
-      }, 2800);
+      }, 700);
     } else {
       if (continuousTimerRef.current) clearInterval(continuousTimerRef.current);
     }
@@ -213,106 +210,92 @@ export default function AccessControl() {
     }
   };
 
-  // REAL REAL-TIME VISION FRAME COMPARISON
-  const runRealLiveComparison = async () => {
+  // CONTINUOUS AUTOMATED FRAME PROCESSING (NO BUTTON PRESS NEEDED)
+  const runContinuousFrameCheck = async () => {
     const video = videoRef.current;
-    if (!isCameraActive || !video) return;
+    if (!isCameraActive || !video || video.readyState < 2) return;
 
     const currentMembers = biometricsStore.getMembers();
     if (currentMembers.length === 0) return;
 
-    // Run mathematical image comparison between live video and enrolled members
+    // Run real visual comparison
     const match = await matchLiveVideoAgainstMembers(video, currentMembers);
     setLiveSimScore(match.similarity);
 
-    // 1. If camera is covered or dark
+    // 1. Camera covered or pitch black
     if (match.isCovered) {
       setCameraCoveredAlert(true);
-      setNoFaceDetectedAlert(false);
-      setScanningStatusText('⚠️ CÁMARA TAPADA O SIN LUZ (ACCESO BLOQUEADO)');
-      return; // Do NOT log or authorize
+      setDetectedCandidate(null);
+      setScanningStatusText('⚠️ CÁMARA TAPADA / SIN LUZ (ACCESO BLOQUEADO)');
+      return;
     } else {
       setCameraCoveredAlert(false);
     }
 
-    // 2. If object is not a human face (hand, watch, clothes, empty background)
+    // 2. No face detected (hands, watch, empty room)
     if (!match.isFacePresent) {
-      setNoFaceDetectedAlert(true);
+      setDetectedCandidate(null);
       setScanningStatusText('BUSCANDO ROSTRO EN EL ENCUADRE...');
-      return; // Do NOT log or authorize
-    } else {
-      setNoFaceDetectedAlert(false);
-    }
-
-    // 3. Face IS detected: Check if it matches any registered member with > 95%
-    if (match.similarity < 95.0) {
-      // Hand or unknown face or different person: low similarity!
-      setScanningStatusText(`ROSTRO NO RECONOCIDO (${match.similarity}% < 95.0% REQUERIDO)`);
-      
-      // We only log a rejection if it was a high-confidence non-match or manual trigger, 
-      // but we do NOT authorize entry under any circumstance!
       return;
     }
 
-    // 4. True match with >= 95.0% similarity!
+    // 3. Face detected in frame
+    if (match.bestMemberName) {
+      setDetectedCandidate(match.bestMemberName);
+    }
+
+    // If similarity is below 95%
+    if (match.similarity < 95.0) {
+      setScanningStatusText(`ROSTRO EN ENCUADRE • SIMILITUD ${match.similarity}% (< 95% REQUERIDO)`);
+      return;
+    }
+
+    // 4. MATCH CONFIRMED (>= 95.0%) -> Trigger automated access!
     if (match.bestMemberId) {
-      isProcessingRef.current = true;
-      setIsScanning(true);
-      setScanningStatusText(`¡ROSTRO AUTORIZADO! (${match.similarity}% > 95%)`);
+      isCooldownRef.current = true;
+      setScanningStatusText(`¡ACCESO CONCEDIDO! (${match.similarity}% > 95%)`);
 
       const result = biometricsStore.registerAccess(match.bestMemberId, accessType, match.similarity);
       setScanResult(result);
-      setIsScanning(false);
 
-      // Cooldown before next check-in
+      // 4-second cooldown before next person
       setTimeout(() => {
-        isProcessingRef.current = false;
+        isCooldownRef.current = false;
         setScanningStatusText('ESCANEO CONTINUO ACTIVO');
-      }, 3500);
+      }, 4000);
     }
   };
 
-  // Manual test trigger (allows explicitly testing >95% match or <95% rejection)
+  // Manual test trigger (allows testing simulation buttons if needed)
   const triggerFacialScan = (forcedMember?: BiometricMember, customSimilarity?: number) => {
-    if (isScanning) return;
-
-    isProcessingRef.current = true;
-    setIsScanning(true);
+    isCooldownRef.current = true;
     setScanResult(null);
-    setScanningStatusText('ANALIZANDO VECTOR FACIAL...');
+    setScanningStatusText('VALIDANDO VECTOR FACIAL...');
 
     setTimeout(() => {
-      setScanningStatusText('VALIDANDO UMBRAL DE SEGURIDAD (> 95%)...');
-    }, 400);
-
-    setTimeout(() => {
-      setIsScanning(false);
-      setScanningStatusText('ESCANEO CONTINUO ACTIVO');
-
       let targetMember = forcedMember;
       if (!targetMember && customSimilarity && customSimilarity >= 95.0) {
         const available = biometricsStore.getMembers();
-        if (available.length > 0) {
-          targetMember = available[0];
-        }
+        if (available.length > 0) targetMember = available[0];
       }
 
       if (targetMember && (!customSimilarity || customSimilarity >= 95.0)) {
-        const sim = customSimilarity ?? parseFloat((96.4 + Math.random() * 3.3).toFixed(1));
+        const sim = customSimilarity ?? parseFloat((96.8 + Math.random() * 2.8).toFixed(1));
         const result = biometricsStore.registerAccess(targetMember.id, accessType, sim);
         setScanResult(result);
         setLiveSimScore(sim);
       } else {
-        const sim = customSimilarity ?? parseFloat((84.0 + Math.random() * 8.0).toFixed(1));
+        const sim = customSimilarity ?? parseFloat((78.0 + Math.random() * 12.0).toFixed(1));
         const result = biometricsStore.registerAccess('UNKNOWN', accessType, sim);
         setScanResult(result);
         setLiveSimScore(sim);
       }
 
       setTimeout(() => {
-        isProcessingRef.current = false;
-      }, 1500);
-    }, 800);
+        isCooldownRef.current = false;
+        setScanningStatusText('ESCANEO CONTINUO ACTIVO');
+      }, 2000);
+    }, 400);
   };
 
   // Delete Member Confirmation
@@ -366,7 +349,7 @@ export default function AccessControl() {
       {/* Top Header */}
       <PageHeader 
         title="Control de Acceso Biométrico" 
-        subtitle="Comparación facial en tiempo real • Autorización estricta > 95.0% de coincidencia."
+        subtitle="Escaneo facial continuo y automático • Validación estricta > 95.0% de efectividad."
       >
         <div className="flex items-center gap-3 ml-auto">
           {/* Navigation Tabs */}
@@ -418,31 +401,31 @@ export default function AccessControl() {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-sm font-bold text-white">Algoritmo de Comparación Estructural en Tiempo Real</span>
+                <span className="text-sm font-bold text-white">Escáner Automático Continuo en Vivo</span>
                 <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 font-mono text-[11px] font-bold rounded-full border border-emerald-500/30">
-                  REQUISITO: {">"} 95.0%
+                  UMBRAL: {">"} 95.0%
                 </span>
               </div>
               <p className="text-xs text-cero-text-muted mt-0.5">
-                La cámara compara el rostro en vivo contra la fotografía guardada. Manos, relojes o personas no registradas son <strong>rechazadas por similitud insuficiente</strong>.
+                El sistema detecta automáticamente al cliente frente al lente y compara su estructura facial en tiempo real sin pulsar botones.
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-3 text-xs font-mono">
             {/* Live calculated similarity gauge */}
-            <div className="flex items-center gap-1.5 px-3 py-1 bg-cero-bg border border-cero-border rounded-lg text-white font-bold">
-              <Gauge size={14} className="text-cero-lime" />
-              <span>Similitud en Vivo: <strong className={liveSimScore >= 95 ? 'text-emerald-400' : 'text-rose-400'}>{liveSimScore}%</strong></span>
+            <div className="flex items-center gap-1.5 px-3.5 py-1.5 bg-cero-bg border border-cero-border rounded-xl text-white font-bold shadow-inner">
+              <Gauge size={15} className="text-cero-lime" />
+              <span>Similitud en Vivo: <strong className={liveSimScore >= 95 ? 'text-emerald-400 font-mono text-sm' : 'text-amber-400 font-mono text-sm'}>{liveSimScore}%</strong></span>
             </div>
 
             {cameraCoveredAlert ? (
-              <span className="px-3 py-1 bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-lg flex items-center gap-1.5 font-bold animate-pulse">
+              <span className="px-3 py-1.5 bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-xl flex items-center gap-1.5 font-bold animate-pulse">
                 <EyeOff size={14} /> CÁMARA TAPADA
               </span>
             ) : (
-              <span className="px-3 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-lg flex items-center gap-1.5 font-bold">
-                <Eye size={14} /> ENFOCANDO
+              <span className="px-3 py-1.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-xl flex items-center gap-1.5 font-bold">
+                <Eye size={14} /> {detectedCandidate ? `DETECTANDO: ${detectedCandidate.split(' ')[0]}` : 'ESCANEANDO EN VIVO'}
               </span>
             )}
           </div>
@@ -491,7 +474,7 @@ export default function AccessControl() {
               </div>
             </div>
             <div className="text-3xl font-bold text-rose-400">{denegadosHoy}</div>
-            <span className="text-xs text-rose-400/80 font-medium mt-1 inline-block">{"<"} 95% similitud, manos o no registrados</span>
+            <span className="text-xs text-rose-400/80 font-medium mt-1 inline-block">{"<"} 95% similitud o no miembros</span>
           </div>
         </div>
 
@@ -515,7 +498,7 @@ export default function AccessControl() {
                           AUTOMÁTICO
                         </span>
                       </h2>
-                      <p className="text-xs text-cero-text-muted">Comparación visual instantánea con vectores faciales</p>
+                      <p className="text-xs text-cero-text-muted">Enfoque su rostro al centro para autorizar acceso</p>
                     </div>
                   </div>
 
@@ -552,7 +535,7 @@ export default function AccessControl() {
                           ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' 
                           : 'bg-[#1e293b] border-cero-border text-gray-400 hover:text-white'
                       }`}
-                      title={continuousMode ? 'Pausar escaneo continuo' : 'Reanudar escaneo continuo'}
+                      title={continuousMode ? 'Pausar escaneo automático' : 'Reanudar escaneo automático'}
                     >
                       {continuousMode ? <Pause size={16} /> : <Play size={16} />}
                     </button>
@@ -560,11 +543,11 @@ export default function AccessControl() {
                 </div>
 
                 {/* Viewfinder Screen */}
-                <div className={`relative h-80 sm:h-96 bg-[#020b12] rounded-2xl border-2 overflow-hidden flex items-center justify-center group shadow-inner transition-colors ${
+                <div className={`relative h-80 sm:h-96 bg-[#020b12] rounded-2xl border-2 overflow-hidden flex items-center justify-center group shadow-inner transition-all ${
                   cameraCoveredAlert 
                     ? 'border-rose-500/70' 
                     : liveSimScore >= 95 
-                    ? 'border-emerald-400 shadow-[0_0_25px_rgba(52,211,153,0.3)]'
+                    ? 'border-emerald-400 shadow-[0_0_35px_rgba(52,211,153,0.35)]'
                     : 'border-cero-border/80'
                 }`}>
                   
@@ -600,7 +583,7 @@ export default function AccessControl() {
                         Lente Obstruido o Sin Luz
                       </h3>
                       <p className="text-xs text-rose-200 mt-1 max-w-sm">
-                        No se detecta imagen ni iluminación suficiente. Destape la cámara y colóquese frente al lente para que el sistema autorice el acceso.
+                        No se detecta imagen ni iluminación suficiente. Destape la cámara y colóquese frente al lente para ingresar.
                       </p>
                       <span className="mt-3 px-3 py-1 bg-black/60 text-rose-400 font-mono text-[11px] rounded-full border border-rose-500/30">
                         ACCESO AUTOMÁTICAMENTE PAUSADO
@@ -683,25 +666,18 @@ export default function AccessControl() {
                     )}
                   </div>
 
-                  {/* Manual Quick Scan button */}
-                  <button
-                    disabled={isScanning || cameraCoveredAlert}
-                    onClick={() => runRealLiveComparison()}
-                    className={`bg-cero-lime hover:bg-cero-lime-hover text-black px-6 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center gap-2 shadow-lg cursor-pointer active:scale-95 ${
-                      isScanning || cameraCoveredAlert ? 'opacity-50 cursor-not-allowed' : ''
-                    }`}
-                  >
-                    <Zap size={18} />
-                    {isScanning ? 'Analizando...' : 'Comparar Fotograma Ahora'}
-                  </button>
+                  <div className="text-xs text-cero-text-muted flex items-center gap-1.5 font-mono">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span>Modo Continuo: Comparación de fotogramas activa</span>
+                  </div>
                 </div>
 
-                {/* Testing Bar: Test high match (>95%) vs low match (<95%) */}
+                {/* Simulation & Validation Bar */}
                 <div className="mt-6 pt-5 border-t border-cero-border/60">
                   <div className="flex items-center justify-between mb-3">
                     <span className="text-xs font-mono text-cero-text-muted uppercase tracking-wider flex items-center gap-1.5">
                       <Sparkles size={14} className="text-cero-lime" />
-                      Prueba Manual de Validación y Simulación de Torniquete:
+                      Prueba Rápida de Validación de Torniquete:
                     </span>
                   </div>
 
@@ -709,7 +685,7 @@ export default function AccessControl() {
                     {members.slice(0, 3).map(member => (
                       <button
                         key={member.id}
-                        onClick={() => triggerFacialScan(member, parseFloat((96.0 + Math.random() * 3.8).toFixed(1)))}
+                        onClick={() => triggerFacialScan(member, parseFloat((96.5 + Math.random() * 3.0).toFixed(1)))}
                         className="p-2 bg-[#10161c] hover:bg-[#1e293b] border border-cero-border hover:border-cero-lime/50 rounded-xl transition-all flex items-center gap-2.5 cursor-pointer text-left group"
                         title={`Simular coincidencia exacta de ${member.fullName} (>95%)`}
                       >
@@ -1138,7 +1114,7 @@ export default function AccessControl() {
                     </div>
                     <div>
                       <p className="text-sm font-bold text-white">Rostro Biométrico Asignado</p>
-                      <p className="text-xs text-emerald-400 font-mono">Vector facial generado correctamente (512-dim embedding)</p>
+                      <p className="text-xs text-emerald-400 font-mono">Vector facial generado correctamente (Spatial HOG + Zonas Faciales)</p>
                     </div>
                   </div>
                 )}
