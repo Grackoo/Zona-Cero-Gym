@@ -65,7 +65,7 @@ export default function Reports() {
         </div>
       </PageHeader>
 
-      <div className="p-8 max-w-7xl w-full mx-auto">
+      <div className="p-8">
         {/* Tab 1: Formal Financial Statements (Matches Reference Image) */}
         {activeTab === 'financial_statements' && (
           <FinancialStatements />
