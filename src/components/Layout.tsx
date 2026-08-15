@@ -1,6 +1,7 @@
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, 
+  ScanFace,
   Users, 
   MonitorSmartphone, 
   Package, 
@@ -15,6 +16,7 @@ import { cn } from '../lib/utils';
 
 const navItems = [
   { icon: LayoutDashboard, label: 'Inicio', path: '/dashboard' },
+  { icon: ScanFace, label: 'Control de Acceso', path: '/access' },
   { icon: Users, label: 'Miembros', path: '/members' },
   { icon: MonitorSmartphone, label: 'Punto de Venta', path: '/pos' },
   { icon: Package, label: 'Inventario', path: '/inventory' },
@@ -24,6 +26,8 @@ const navItems = [
 ];
 
 export default function Layout() {
+  const navigate = useNavigate();
+
   return (
     <div className="flex h-screen bg-cero-bg overflow-hidden font-sans">
       {/* Sidebar */}
@@ -39,7 +43,10 @@ export default function Layout() {
             </div>
           </div>
 
-          <button className="w-full flex items-center justify-center gap-2 bg-cero-lime text-black font-semibold py-3 px-4 rounded-lg hover:bg-cero-lime-hover transition-colors">
+          <button 
+            onClick={() => navigate('/access')}
+            className="w-full flex items-center justify-center gap-2 bg-cero-lime text-black font-semibold py-3 px-4 rounded-lg hover:bg-cero-lime-hover transition-colors cursor-pointer"
+          >
             <Plus size={20} />
             Nuevo Ingreso
           </button>

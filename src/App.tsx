@@ -7,6 +7,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import Layout from './components/Layout';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
+import AccessControl from './pages/AccessControl';
 import Members from './pages/Members';
 import POS from './pages/POS';
 import Inventory from './pages/Inventory';
@@ -23,6 +24,7 @@ export default function App() {
         <Route path="/" element={<Layout />}>
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<Dashboard />} />
+          <Route path="access" element={<AccessControl />} />
           <Route path="members" element={<Members />} />
           <Route path="pos" element={<POS />} />
           <Route path="inventory" element={<Inventory />} />
