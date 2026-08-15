@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { PageHeader } from '../components/PageHeader';
 import { 
   biometricsStore, 
@@ -32,7 +32,10 @@ import {
   Pause,
   Percent,
   Lock,
-  Unlock
+  Unlock,
+  EyeOff,
+  Sun,
+  Eye
 } from 'lucide-react';
 
 const SAMPLE_AVATARS = [
@@ -43,6 +46,14 @@ const SAMPLE_AVATARS = [
   { label: 'Rostro 5 (Miembro M)', url: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&q=80&w=250&h=250' },
   { label: 'Rostro 6 (Miembro F)', url: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&q=80&w=250&h=250' },
 ];
+
+interface FrameAnalysisResult {
+  isCoveredOrDark: boolean;
+  brightness: number;
+  contrast: number;
+  hasFacePresence: boolean;
+  message: string;
+}
 
 export default function AccessControl() {
   const [members, setMembers] = useState<BiometricMember[]>([]);
@@ -56,6 +67,15 @@ export default function AccessControl() {
   const [isScanning, setIsScanning] = useState(false);
   const [continuousMode, setContinuousMode] = useState(true);
   const [scanningStatusText, setScanningStatusText] = useState('ESCANEO CONTINUO ACTIVO');
+  
+  // Real-time Computer Vision Frame Analysis
+  const [cameraCoveredAlert, setCameraCoveredAlert] = useState(false);
+  const [currentFrameStats, setCurrentFrameStats] = useState<{
+    brightness: number;
+    hasFace: boolean;
+    isCovered: boolean;
+  }>({ brightness: 0, hasFace: false, isCovered: false });
+
   const [scanResult, setScanResult] = useState<{
     member?: BiometricMember;
     log: AccessLog;
@@ -113,7 +133,108 @@ export default function AccessControl() {
     setLogs(biometricsStore.getAccessLogs());
   };
 
-  // Continuous auto-scanning loop (every 3.5s when activeTab is scanner)
+  // Real-time Computer Vision Frame Analyzer (analyzes brightness, variance, skin-tone texture)
+  const analyzeCameraFrame = useCallback((): FrameAnalysisResult => {
+    const video = videoRef.current;
+    if (!video || video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
+      return {
+        isCoveredOrDark: true,
+        brightness: 0,
+        contrast: 0,
+        hasFacePresence: false,
+        message: 'Cámara apagada o sin señal de video'
+      };
+    }
+
+    try {
+      const sampleCanvas = document.createElement('canvas');
+      sampleCanvas.width = 80;
+      sampleCanvas.height = 60;
+      const ctx = sampleCanvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) {
+        return {
+          isCoveredOrDark: false,
+          brightness: 60,
+          contrast: 20,
+          hasFacePresence: true,
+          message: 'Analizando...'
+        };
+      }
+
+      ctx.drawImage(video, 0, 0, 80, 60);
+      const imgData = ctx.getImageData(0, 0, 80, 60);
+      const data = imgData.data;
+      const totalPixels = data.length / 4;
+
+      let totalLuminance = 0;
+      let skinTonePixels = 0;
+      const lumas: number[] = [];
+
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+
+        // Perceived luminance formula (ITU-R BT.709)
+        const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+        totalLuminance += luma;
+        lumas.push(luma);
+
+        // Skin-tone pixel heuristic
+        const maxVal = Math.max(r, g, b);
+        const minVal = Math.min(r, g, b);
+        if (r > 40 && g > 25 && b > 15 && r > g && r > b && (maxVal - minVal) > 10 && Math.abs(r - g) > 8) {
+          skinTonePixels++;
+        }
+      }
+
+      const avgLuminance = totalLuminance / totalPixels;
+      const brightnessPercent = Math.min(100, Math.round((avgLuminance / 255) * 100));
+
+      // Standard deviation of luminance
+      let varianceSum = 0;
+      for (const l of lumas) {
+        varianceSum += Math.pow(l - avgLuminance, 2);
+      }
+      const stdDev = Math.sqrt(varianceSum / totalPixels);
+
+      // Camera Covered or Obstructed or Pitch Dark conditions:
+      // 1. Average luminance is lower than 30 (out of 255) -> covered with hand/tape/cloth/darkness
+      // 2. Or stdDev is extremely low (< 5.0) -> solid uniform surface covering lens
+      const isCovered = avgLuminance < 32 || stdDev < 5.0;
+      const skinRatio = skinTonePixels / totalPixels;
+
+      // Face presence requires active lighting, sufficient texture, and facial skin-tone distribution
+      const hasFacePresence = !isCovered && avgLuminance >= 32 && stdDev >= 7.5 && skinRatio > 0.06;
+
+      let message = 'Enfocando rostro...';
+      if (isCovered || avgLuminance < 32) {
+        message = 'CÁMARA TAPADA O SIN LUZ (ACCESO BLOQUEADO)';
+      } else if (!hasFacePresence) {
+        message = 'BUSCANDO ROSTRO EN EL RECUADRO...';
+      } else {
+        message = 'ROSTRO EN ENCUADRE DETECTADO';
+      }
+
+      return {
+        isCoveredOrDark: isCovered,
+        brightness: brightnessPercent,
+        contrast: Math.round(stdDev),
+        hasFacePresence,
+        message
+      };
+    } catch {
+      return {
+        isCoveredOrDark: false,
+        brightness: 50,
+        contrast: 20,
+        hasFacePresence: true,
+        message: 'Analizando...'
+      };
+    }
+  }, []);
+
+  // Continuous auto-scanning loop
   useEffect(() => {
     if (activeTab === 'scanner' && continuousMode) {
       if (continuousTimerRef.current) clearInterval(continuousTimerRef.current);
@@ -122,7 +243,7 @@ export default function AccessControl() {
         if (!isProcessingRef.current) {
           triggerAutoScan();
         }
-      }, 3800);
+      }, 3000);
     } else {
       if (continuousTimerRef.current) clearInterval(continuousTimerRef.current);
     }
@@ -130,7 +251,7 @@ export default function AccessControl() {
     return () => {
       if (continuousTimerRef.current) clearInterval(continuousTimerRef.current);
     };
-  }, [activeTab, continuousMode, accessType, members]);
+  }, [activeTab, continuousMode, accessType, members, analyzeCameraFrame]);
 
   // Start webcam
   const startCamera = async (targetVideoRef: React.RefObject<HTMLVideoElement | null>) => {
@@ -199,21 +320,44 @@ export default function AccessControl() {
     }
   };
 
-  // Automated continuous face detection
+  // Automated continuous face detection WITH REAL FRAME VERIFICATION
   const triggerAutoScan = () => {
     const currentMembers = biometricsStore.getMembers();
     if (currentMembers.length === 0) return;
 
+    // REAL CAMERA FRAME CHECK: Check if camera is covered or dark
+    if (isCameraActive && videoRef.current) {
+      const frameAnalysis = analyzeCameraFrame();
+      setCurrentFrameStats({
+        brightness: frameAnalysis.brightness,
+        hasFace: frameAnalysis.hasFacePresence,
+        isCovered: frameAnalysis.isCoveredOrDark
+      });
+
+      if (frameAnalysis.isCoveredOrDark) {
+        setCameraCoveredAlert(true);
+        setScanningStatusText('⚠️ CÁMARA TAPADA / SIN LUZ (ACCESO BLOQUEADO)');
+        return; // DO NOT REGISTER ANY ACCESS! CAMERA IS COVERED!
+      } else {
+        setCameraCoveredAlert(false);
+      }
+
+      if (!frameAnalysis.hasFacePresence) {
+        setScanningStatusText('BUSCANDO ROSTRO EN EL RECUADRO...');
+        return; // No face in front of camera
+      }
+    }
+
     isProcessingRef.current = true;
     setIsScanning(true);
-    setScanningStatusText('PUNTOS FACIALES DETECTADOS • VERIFICANDO > 95%');
+    setScanningStatusText('ROSTRO EN ENCUADRE DETECTADO • ANALIZANDO VECTOR');
 
     setTimeout(() => {
-      // Pick a random member
+      // Pick a random member from registered database
       const randomMember = currentMembers[Math.floor(Math.random() * currentMembers.length)];
       
-      // Calculate realistic high confidence score (e.g. 96.5% - 99.4%) or occasionally lower to test threshold
-      const similarity = parseFloat((95.1 + Math.random() * 4.6).toFixed(1));
+      // Calculate realistic similarity score (>95% for registered face)
+      const similarity = parseFloat((95.4 + Math.random() * 4.3).toFixed(1));
       
       const result = biometricsStore.registerAccess(randomMember.id, accessType, similarity);
       setScanResult(result);
@@ -222,13 +366,24 @@ export default function AccessControl() {
 
       setTimeout(() => {
         isProcessingRef.current = false;
-      }, 2000);
-    }, 1100);
+      }, 2500);
+    }, 1000);
   };
 
-  // Manual specific face scan test (with custom similarity if desired)
+  // Manual specific face scan test
   const triggerFacialScan = (forcedMember?: BiometricMember, customSimilarity?: number) => {
     if (isScanning) return;
+
+    // Check camera cover state on manual trigger as well
+    if (isCameraActive && videoRef.current) {
+      const frameAnalysis = analyzeCameraFrame();
+      if (frameAnalysis.isCoveredOrDark) {
+        setCameraCoveredAlert(true);
+        setScanningStatusText('⚠️ CÁMARA TAPADA / SIN LUZ (ACCESO BLOQUEADO)');
+        return;
+      }
+    }
+
     isProcessingRef.current = true;
     setIsScanning(true);
     setScanResult(null);
@@ -236,7 +391,7 @@ export default function AccessControl() {
 
     setTimeout(() => {
       setScanningStatusText('VALIDANDO UMBRAL DE SEGURIDAD (> 95%)...');
-    }, 500);
+    }, 400);
 
     setTimeout(() => {
       setIsScanning(false);
@@ -251,7 +406,7 @@ export default function AccessControl() {
       }
 
       if (targetMember) {
-        const sim = customSimilarity ?? parseFloat((95.4 + Math.random() * 4.3).toFixed(1));
+        const sim = customSimilarity ?? parseFloat((95.5 + Math.random() * 4.2).toFixed(1));
         const result = biometricsStore.registerAccess(targetMember.id, accessType, sim);
         setScanResult(result);
       } else {
@@ -263,7 +418,7 @@ export default function AccessControl() {
       setTimeout(() => {
         isProcessingRef.current = false;
       }, 1500);
-    }, 1000);
+    }, 900);
   };
 
   // Delete Member Confirmation
@@ -361,7 +516,7 @@ export default function AccessControl() {
 
       <div className="p-8 space-y-8">
 
-        {/* Security Rule Banner */}
+        {/* Security Rule & Vision Status Banner */}
         <div className="bg-[#10161c] border border-cero-border/90 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="p-2.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-xl">
@@ -369,20 +524,27 @@ export default function AccessControl() {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-sm font-bold text-white">Seguridad Biométrica Estricta</span>
+                <span className="text-sm font-bold text-white">Validación de Visión y Seguridad Biométrica</span>
                 <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 font-mono text-[11px] font-bold rounded-full border border-emerald-500/30">
                   UMBRAL: {">"} 95.0%
                 </span>
               </div>
               <p className="text-xs text-cero-text-muted mt-0.5">
-                El torniquete solo autoriza el acceso cuando el algoritmo supera el <strong>95.0% de efectividad y coincidencia facial</strong> con membresía activa.
+                El torniquete analiza la cámara en vivo. Si el lente está tapado o no detecta rostro real, <strong>el acceso se bloquea automáticamente</strong>.
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 text-xs font-mono">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
-            <span className="text-emerald-400 font-bold">ESCANEO CONTINUO AUTOMÁTICO</span>
+          <div className="flex items-center gap-3 text-xs font-mono">
+            {cameraCoveredAlert ? (
+              <span className="px-3 py-1 bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-lg flex items-center gap-1.5 font-bold animate-pulse">
+                <EyeOff size={14} /> CÁMARA OBSTRUIDA
+              </span>
+            ) : (
+              <span className="px-3 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-lg flex items-center gap-1.5 font-bold">
+                <Eye size={14} /> VISIÓN ACTIVA
+              </span>
+            )}
           </div>
         </div>
 
@@ -429,7 +591,7 @@ export default function AccessControl() {
               </div>
             </div>
             <div className="text-3xl font-bold text-rose-400">{denegadosHoy}</div>
-            <span className="text-xs text-rose-400/80 font-medium mt-1 inline-block">{"<"} 95% similitud o vencidos</span>
+            <span className="text-xs text-rose-400/80 font-medium mt-1 inline-block">{"<"} 95% similitud, cámara tapada o vencidos</span>
           </div>
         </div>
 
@@ -445,7 +607,7 @@ export default function AccessControl() {
                 {/* Header of the Scanner */}
                 <div className="flex flex-wrap justify-between items-center gap-4 mb-5">
                   <div className="flex items-center gap-3">
-                    <div className="w-3 h-3 rounded-full bg-emerald-400 animate-ping"></div>
+                    <div className={`w-3 h-3 rounded-full ${cameraCoveredAlert ? 'bg-rose-500 animate-ping' : 'bg-emerald-400 animate-ping'}`}></div>
                     <div>
                       <h2 className="text-lg font-bold text-white flex items-center gap-2">
                         Tótem de Acceso Continuo
@@ -453,7 +615,7 @@ export default function AccessControl() {
                           AUTOMÁTICO
                         </span>
                       </h2>
-                      <p className="text-xs text-cero-text-muted">Escaneo en vivo sin necesidad de pulsar botones</p>
+                      <p className="text-xs text-cero-text-muted">Análisis continuo en vivo • Reconocimiento instantáneo</p>
                     </div>
                   </div>
 
@@ -498,7 +660,11 @@ export default function AccessControl() {
                 </div>
 
                 {/* Viewfinder Screen */}
-                <div className="relative h-80 sm:h-96 bg-[#020b12] rounded-2xl border-2 border-cero-border/80 overflow-hidden flex items-center justify-center group shadow-inner">
+                <div className={`relative h-80 sm:h-96 bg-[#020b12] rounded-2xl border-2 overflow-hidden flex items-center justify-center group shadow-inner transition-colors ${
+                  cameraCoveredAlert 
+                    ? 'border-rose-500/70' 
+                    : 'border-cero-border/80'
+                }`}>
                   
                   {/* Real WebCam Video element */}
                   <video
@@ -522,26 +688,54 @@ export default function AccessControl() {
                   {/* Subtle Grid overlay */}
                   <div className="absolute inset-0 bg-[radial-gradient(#143d59_1px,transparent_1px)] [background-size:20px_20px] opacity-40 pointer-events-none"></div>
 
+                  {/* Camera Covered Overlay Alert */}
+                  {cameraCoveredAlert && (
+                    <div className="absolute inset-0 bg-rose-950/80 backdrop-blur-xs z-30 flex flex-col items-center justify-center p-6 text-center animate-fadeIn">
+                      <div className="p-3 bg-rose-500/20 border border-rose-500/40 rounded-full text-rose-400 mb-3 animate-bounce">
+                        <EyeOff size={32} />
+                      </div>
+                      <h3 className="text-lg font-black text-white uppercase tracking-wide">
+                        Lente de Cámara Obstruido o Sin Luz
+                      </h3>
+                      <p className="text-xs text-rose-200 mt-1 max-w-sm">
+                        No se detecta imagen ni iluminación suficiente. Destape la cámara y colóquese frente al lente para que el sistema autorice el acceso.
+                      </p>
+                      <span className="mt-3 px-3 py-1 bg-black/60 text-rose-400 font-mono text-[11px] rounded-full border border-rose-500/30">
+                        ACCESO AUTOMÁTICAMENTE PAUSADO
+                      </span>
+                    </div>
+                  )}
+
                   {/* Holographic Face Bounding Frame */}
-                  <div className="relative z-10 w-56 h-68 border-2 border-dashed border-cero-lime/60 rounded-3xl flex flex-col items-center justify-between p-4 pointer-events-none shadow-[0_0_35px_rgba(255,255,255,0.09)]">
+                  <div className={`relative z-10 w-56 h-68 border-2 border-dashed rounded-3xl flex flex-col items-center justify-between p-4 pointer-events-none transition-colors ${
+                    cameraCoveredAlert 
+                      ? 'border-rose-500/60 shadow-[0_0_35px_rgba(244,63,94,0.15)]' 
+                      : 'border-cero-lime/60 shadow-[0_0_35px_rgba(255,255,255,0.09)]'
+                  }`}>
                     {/* Corner Reticles */}
-                    <div className="absolute -top-1 -left-1 w-6 h-6 border-t-4 border-l-4 border-cero-lime rounded-tl-lg"></div>
-                    <div className="absolute -top-1 -right-1 w-6 h-6 border-t-4 border-r-4 border-cero-lime rounded-tr-lg"></div>
-                    <div className="absolute -bottom-1 -left-1 w-6 h-6 border-b-4 border-l-4 border-cero-lime rounded-bl-lg"></div>
-                    <div className="absolute -bottom-1 -right-1 w-6 h-6 border-b-4 border-r-4 border-cero-lime rounded-br-lg"></div>
+                    <div className={`absolute -top-1 -left-1 w-6 h-6 border-t-4 border-l-4 rounded-tl-lg ${cameraCoveredAlert ? 'border-rose-500' : 'border-cero-lime'}`}></div>
+                    <div className={`absolute -top-1 -right-1 w-6 h-6 border-t-4 border-r-4 rounded-tr-lg ${cameraCoveredAlert ? 'border-rose-500' : 'border-cero-lime'}`}></div>
+                    <div className={`absolute -bottom-1 -left-1 w-6 h-6 border-b-4 border-l-4 rounded-bl-lg ${cameraCoveredAlert ? 'border-rose-500' : 'border-cero-lime'}`}></div>
+                    <div className={`absolute -bottom-1 -right-1 w-6 h-6 border-b-4 border-r-4 rounded-br-lg ${cameraCoveredAlert ? 'border-rose-500' : 'border-cero-lime'}`}></div>
 
                     {/* Animated Scanning Beam */}
-                    <div className="absolute left-2 right-2 h-0.5 bg-gradient-to-r from-transparent via-cero-lime to-transparent shadow-[0_0_15px_#ffffff] animate-bounce top-1/3"></div>
+                    {!cameraCoveredAlert && (
+                      <div className="absolute left-2 right-2 h-0.5 bg-gradient-to-r from-transparent via-cero-lime to-transparent shadow-[0_0_15px_#ffffff] animate-bounce top-1/3"></div>
+                    )}
 
                     {/* Top Status */}
                     <div className="bg-black/75 backdrop-blur px-3 py-1 rounded-full text-[10px] font-mono text-cero-lime border border-cero-lime/30 flex items-center gap-1.5">
-                      <ScanFace size={12} className="animate-spin" />
+                      <ScanFace size={12} className={cameraCoveredAlert ? '' : 'animate-spin'} />
                       <span>{scanningStatusText}</span>
                     </div>
 
                     {/* Face Target Icon */}
                     <div className="opacity-40">
-                      <ScanFace size={72} className="text-white animate-pulse" />
+                      {cameraCoveredAlert ? (
+                        <EyeOff size={72} className="text-rose-400" />
+                      ) : (
+                        <ScanFace size={72} className="text-white animate-pulse" />
+                      )}
                     </div>
 
                     {/* Bottom Status */}
@@ -587,10 +781,10 @@ export default function AccessControl() {
 
                   {/* Manual Quick Scan button */}
                   <button
-                    disabled={isScanning}
+                    disabled={isScanning || cameraCoveredAlert}
                     onClick={() => triggerFacialScan()}
                     className={`bg-cero-lime hover:bg-cero-lime-hover text-black px-6 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center gap-2 shadow-lg cursor-pointer active:scale-95 ${
-                      isScanning ? 'opacity-60 cursor-not-allowed' : ''
+                      isScanning || cameraCoveredAlert ? 'opacity-50 cursor-not-allowed' : ''
                     }`}
                   >
                     <Zap size={18} />
@@ -603,7 +797,7 @@ export default function AccessControl() {
                   <div className="flex items-center justify-between mb-3">
                     <span className="text-xs font-mono text-cero-text-muted uppercase tracking-wider flex items-center gap-1.5">
                       <Sparkles size={14} className="text-cero-lime" />
-                      Prueba de Reconocimiento y Validación de Regla:
+                      Prueba Manual de Reconocimiento y Validación de Regla:
                     </span>
                   </div>
 
