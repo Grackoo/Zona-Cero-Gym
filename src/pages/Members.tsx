@@ -3,23 +3,23 @@ import { Search, Users, CheckCircle, TrendingUp, MoreVertical, Filter } from 'lu
 
 export default function Members() {
   const members = [
-    { name: 'Sarah Jenkins', id: '4892-A', plan: 'Anual Premium', status: 'Activo', visit: 'Hoy, 08:42 AM', img: 'https://i.pravatar.cc/150?u=sarahj' },
-    { name: 'Marcus Johnson', id: '5120-B', plan: 'Mensual Básico', status: 'Vencido', visit: 'Hace 3 días', img: 'https://i.pravatar.cc/150?u=marcusj' },
-    { name: 'Elena Rodriguez', id: '3044-C', plan: 'Anual Estándar', status: 'Congelado', visit: 'Hace 14 días', img: 'https://i.pravatar.cc/150?u=elenar' },
-    { name: 'David Chen', id: '6711-A', plan: 'Mensual Premium', status: 'Activo', visit: 'Ayer, 18:30 PM', img: 'https://i.pravatar.cc/150?u=davidc' },
+    { name: 'Elia Hernandez', id: '4892-A', plan: 'Anual Premium', status: 'Activo', visit: 'Hoy, 08:42 AM', img: 'https://i.pravatar.cc/150?u=elia-hernandez' },
+    { name: 'Maria Lopez', id: '5120-B', plan: 'Mensual Básico', status: 'Vencido', visit: 'Hace 3 días', img: 'https://i.pravatar.cc/150?u=maria-lopez' },
+    { name: 'Elena Rodriguez', id: '3044-C', plan: 'Anual Estándar', status: 'Congelado', visit: 'Hace 14 días', img: 'https://i.pravatar.cc/150?u=elena-rodriguez' },
+    { name: 'Carlos Mendoza', id: '6711-A', plan: 'Mensual Premium', status: 'Activo', visit: 'Ayer, 18:30 PM', img: 'https://i.pravatar.cc/150?u=carlos-mendoza' },
   ];
 
   return (
     <div className="h-full flex flex-col overflow-y-auto">
-      <PageHeader 
-        title="Directorio de Miembros" 
+      <PageHeader
+        title="Directorio de Miembros"
         subtitle="Administra y monitorea todas las membresías activas del gimnasio."
       >
         <button className="bg-cero-lime text-black font-semibold px-4 py-2 rounded-lg ml-auto hover:bg-cero-lime-hover transition-colors text-sm">
           + Añadir Miembro
         </button>
       </PageHeader>
-      
+
       <div className="p-8">
         {/* Stats Row */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
@@ -32,7 +32,7 @@ export default function Members() {
             </div>
             <div className="text-4xl font-bold text-white">1,248</div>
           </div>
-          
+
           <div className="bg-cero-panel border border-cero-border rounded-xl p-6">
             <div className="flex justify-between items-start mb-2">
               <span className="text-sm text-cero-text-muted font-mono tracking-wider uppercase">Miembros Activos</span>
@@ -60,9 +60,9 @@ export default function Members() {
           <div className="p-4 border-b border-cero-border flex gap-4">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-cero-text-muted" size={18} />
-              <input 
-                type="text" 
-                placeholder="Filtrar miembros..." 
+              <input
+                type="text"
+                placeholder="Filtrar miembros..."
                 className="w-full bg-white text-black text-sm rounded-lg pl-10 pr-4 py-2 focus:outline-none"
               />
             </div>
@@ -103,11 +103,10 @@ export default function Members() {
                     </td>
                     <td className="px-6 py-4 text-gray-300">{member.plan}</td>
                     <td className="px-6 py-4">
-                      <span className={`px-3 py-1 text-xs font-medium rounded-full border ${
-                        member.status === 'Activo' ? 'bg-cero-lime/10 text-cero-lime border-cero-lime/20' :
-                        member.status === 'Vencido' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' :
-                        'bg-gray-500/10 text-gray-400 border-gray-500/20'
-                      }`}>
+                      <span className={`px-3 py-1 text-xs font-medium rounded-full border ${member.status === 'Activo' ? 'bg-cero-lime/10 text-cero-lime border-cero-lime/20' :
+                          member.status === 'Vencido' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' :
+                            'bg-gray-500/10 text-gray-400 border-gray-500/20'
+                        }`}>
                         {member.status}
                       </span>
                     </td>
