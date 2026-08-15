@@ -1,0 +1,6 @@
+{
+  "name": "Cero Gym Management Suite",
+  "description": "Plataforma minimalista de gestión de gimnasios con integración de Supabase para membresías, POS y control de inventario.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
