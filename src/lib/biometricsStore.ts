@@ -1,3 +1,5 @@
+import { FitnessGoal } from '../types';
+
 export interface BiometricMember {
   id: string;
   fullName: string;
@@ -9,6 +11,10 @@ export interface BiometricMember {
   registeredAt: string;
   lastVisit?: string;
   notes?: string;
+  accessToken: string;
+  memberPin: string;
+  birthDate?: string;
+  fitnessGoal: FitnessGoal;
 }
 
 export interface AccessLog {
@@ -25,8 +31,8 @@ export interface AccessLog {
   similarity: number;
 }
 
-const STORAGE_MEMBERS_KEY = 'zona_cero_biometric_members_v1';
-const STORAGE_LOGS_KEY = 'zona_cero_access_logs_v1';
+const STORAGE_MEMBERS_KEY = 'zona_cero_biometric_members_v2';
+const STORAGE_LOGS_KEY = 'zona_cero_access_logs_v2';
 
 const INITIAL_MEMBERS: BiometricMember[] = [
   {
@@ -39,6 +45,10 @@ const INITIAL_MEMBERS: BiometricMember[] = [
     whatsappConnected: true,
     registeredAt: '2026-01-15',
     lastVisit: 'Hoy, 08:42 AM',
+    accessToken: 'carlos-mendoza-token-77',
+    memberPin: '1234',
+    birthDate: '1998-04-12',
+    fitnessGoal: 'hipertrofia'
   },
   {
     id: 'ZC-1002',
@@ -50,28 +60,40 @@ const INITIAL_MEMBERS: BiometricMember[] = [
     whatsappConnected: true,
     registeredAt: '2026-02-10',
     lastVisit: 'Hoy, 08:15 AM',
+    accessToken: 'elia-hernandez-token-88',
+    memberPin: '4321',
+    birthDate: '2001-09-24',
+    fitnessGoal: 'perdida_grasa'
   },
   {
     id: 'ZC-1003',
     fullName: 'Maria Lopez',
     phone: '+52 55 4567 8901',
     planType: 'Mensual Básico',
-    status: 'Vencido',
+    status: 'Activo',
     avatarUrl: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&q=80&w=250&h=250',
-    whatsappConnected: false,
+    whatsappConnected: true,
     registeredAt: '2026-01-05',
-    lastVisit: 'Hace 3 días',
+    lastVisit: 'Hace 4 días (2026-08-12)',
+    accessToken: 'maria-lopez-token-99',
+    memberPin: '2026',
+    birthDate: '1989-11-03',
+    fitnessGoal: 'salud_general'
   },
   {
     id: 'ZC-1004',
     fullName: 'Elena Rodriguez',
     phone: '+52 55 2345 6789',
     planType: 'Anual Estándar',
-    status: 'Congelado',
+    status: 'Activo',
     avatarUrl: 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&q=80&w=250&h=250',
     whatsappConnected: true,
     registeredAt: '2025-11-20',
-    lastVisit: 'Hace 14 días',
+    lastVisit: 'Hace 5 días (2026-08-11)',
+    accessToken: 'elena-rodriguez-token-11',
+    memberPin: '8888',
+    birthDate: '1995-07-19',
+    fitnessGoal: 'mantenimiento'
   },
   {
     id: 'ZC-1005',
@@ -83,6 +105,25 @@ const INITIAL_MEMBERS: BiometricMember[] = [
     whatsappConnected: true,
     registeredAt: '2026-03-01',
     lastVisit: 'Hoy, 07:30 AM',
+    accessToken: 'sarah-jenkins-token-22',
+    memberPin: '9999',
+    birthDate: '1992-03-15',
+    fitnessGoal: 'hipertrofia'
+  },
+  {
+    id: 'ZC-1006',
+    fullName: 'Roberto Valdés',
+    phone: '+52 55 6789 0123',
+    planType: 'Mensual Básico',
+    status: 'Activo',
+    avatarUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=250&h=250',
+    whatsappConnected: true,
+    registeredAt: '2026-02-01',
+    lastVisit: 'Hace 3 días (2026-08-13)',
+    accessToken: 'roberto-valdes-token-33',
+    memberPin: '5555',
+    birthDate: '1982-12-05',
+    fitnessGoal: 'perdida_grasa'
   }
 ];
 
@@ -129,12 +170,26 @@ export const biometricsStore = {
     }
   },
 
-  addMember(member: Omit<BiometricMember, 'id' | 'registeredAt'>): BiometricMember {
+  getMemberByToken(token: string): BiometricMember | undefined {
+    const members = this.getMembers();
+    return members.find(m => m.accessToken === token || m.id === token);
+  },
+
+  getMemberById(id: string): BiometricMember | undefined {
+    const members = this.getMembers();
+    return members.find(m => m.id === id);
+  },
+
+  addMember(member: Omit<BiometricMember, 'id' | 'registeredAt' | 'accessToken'> & { accessToken?: string }): BiometricMember {
     const members = this.getMembers();
     const newId = `ZC-${1000 + members.length + 1}`;
+    const generatedToken = member.accessToken || `token-${Math.random().toString(36).substring(2, 10)}-${Date.now().toString(36)}`;
     const newMember: BiometricMember = {
       ...member,
       id: newId,
+      accessToken: generatedToken,
+      memberPin: member.memberPin || '1234',
+      fitnessGoal: member.fitnessGoal || 'salud_general',
       registeredAt: new Date().toISOString().split('T')[0],
       lastVisit: 'Recién Registrado',
     };
@@ -206,7 +261,7 @@ export const biometricsStore = {
       return { success: false, log, similarity };
     }
 
-    // Determine biometric similarity (defaults to 95.2% - 99.8%, or can be lower if testing)
+    // Determine biometric similarity
     const similarity = forcedSimilarity ?? parseFloat((95.1 + Math.random() * 4.7).toFixed(1));
     
     // Strict > 95% threshold requirement

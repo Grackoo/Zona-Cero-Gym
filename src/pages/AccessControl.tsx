@@ -38,8 +38,10 @@ import {
   Unlock,
   EyeOff,
   Eye,
-  Gauge
+  Gauge,
+  Wallet
 } from 'lucide-react';
+import { walletService, DAILY_REWARD_AMOUNT } from '../lib/walletService';
 
 const SAMPLE_AVATARS = [
   { label: 'Rostro 1 (Atleta M)', url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=250&h=250' },
@@ -74,6 +76,12 @@ export default function AccessControl() {
     similarity: number;
   } | null>(null);
 
+  const [rewardNotice, setRewardNotice] = useState<{
+    rewarded: boolean;
+    newBalance: number;
+    message: string;
+  } | null>(null);
+
   // Member deletion state
   const [memberToDelete, setMemberToDelete] = useState<BiometricMember | null>(null);
 
@@ -85,6 +93,8 @@ export default function AccessControl() {
     status: 'Activo' as 'Activo' | 'Vencido' | 'Congelado',
     whatsappConnected: true,
     avatarUrl: SAMPLE_AVATARS[0].url,
+    memberPin: '1234',
+    fitnessGoal: 'salud_general' as const,
   });
   const [enrollmentMode, setEnrollmentMode] = useState<'camera' | 'upload' | 'samples'>('samples');
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
@@ -258,6 +268,14 @@ export default function AccessControl() {
       const result = biometricsStore.registerAccess(match.bestMemberId, accessType, match.similarity);
       setScanResult(result);
 
+      if (result.success && accessType === 'Entrada') {
+        walletService.grantCheckinReward(match.bestMemberId).then(reward => {
+          setRewardNotice(reward);
+        });
+      } else {
+        setRewardNotice(null);
+      }
+
       // 4-second cooldown before next person
       setTimeout(() => {
         isCooldownRef.current = false;
@@ -284,11 +302,20 @@ export default function AccessControl() {
         const result = biometricsStore.registerAccess(targetMember.id, accessType, sim);
         setScanResult(result);
         setLiveSimScore(sim);
+
+        if (result.success && accessType === 'Entrada') {
+          walletService.grantCheckinReward(targetMember.id).then(reward => {
+            setRewardNotice(reward);
+          });
+        } else {
+          setRewardNotice(null);
+        }
       } else {
         const sim = customSimilarity ?? parseFloat((78.0 + Math.random() * 12.0).toFixed(1));
         const result = biometricsStore.registerAccess('UNKNOWN', accessType, sim);
         setScanResult(result);
         setLiveSimScore(sim);
+        setRewardNotice(null);
       }
 
       setTimeout(() => {
@@ -316,6 +343,8 @@ export default function AccessControl() {
       status: formData.status,
       avatarUrl: formData.avatarUrl || SAMPLE_AVATARS[0].url,
       whatsappConnected: formData.whatsappConnected,
+      memberPin: formData.memberPin || '1234',
+      fitnessGoal: formData.fitnessGoal || 'salud_general',
     });
 
     setRegistrationSuccess(true);
@@ -779,6 +808,17 @@ export default function AccessControl() {
                       }`}>
                         {scanResult.log.reason}
                       </p>
+
+                      {scanResult.success && rewardNotice && (
+                        <div className="mt-2 inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-cero-lime/10 border border-cero-lime/30 text-xs font-semibold text-cero-lime">
+                          <Wallet size={14} className="shrink-0" />
+                          <span>
+                            {rewardNotice.rewarded
+                              ? `¡+$${DAILY_REWARD_AMOUNT.toFixed(2)} MXN en Monedero! Saldo actual: $${rewardNotice.newBalance.toFixed(2)}`
+                              : `Monedero al día • Saldo acumulado: $${rewardNotice.newBalance.toFixed(2)} MXN`}
+                          </span>
+                        </div>
+                      )}
                     </div>
 
                     <div className="text-center sm:text-right shrink-0">

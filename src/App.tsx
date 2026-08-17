@@ -14,6 +14,7 @@ import Inventory from './pages/Inventory';
 import Reports from './pages/Reports';
 import Staff from './pages/Staff';
 import Settings from './pages/Settings';
+import MemberPortal from './pages/MemberPortal';
 
 export default function App() {
   return (
@@ -21,6 +22,10 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<Login />} />
         
+        {/* Public Member Portal Route */}
+        <Route path="/portal/:token" element={<MemberPortal />} />
+        
+        {/* Admin Dashboard & Management System */}
         <Route path="/" element={<Layout />}>
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<Dashboard />} />
