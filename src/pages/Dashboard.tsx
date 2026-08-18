@@ -36,6 +36,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     loadData();
+    biometricsStore.syncFromSupabase();
     const handleAccessUpdate = () => loadData();
     const handleMembersUpdate = () => loadData();
     const handleWalletUpdate = () => loadData();

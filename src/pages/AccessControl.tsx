@@ -110,6 +110,7 @@ export default function AccessControl() {
   // Auto request camera on module load
   useEffect(() => {
     loadData();
+    biometricsStore.syncFromSupabase();
     const handleMembersUpdated = () => setMembers(biometricsStore.getMembers());
     const handleAccessUpdated = () => setLogs(biometricsStore.getAccessLogs());
 

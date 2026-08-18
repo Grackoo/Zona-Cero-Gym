@@ -37,6 +37,7 @@ export default function Members() {
 
   useEffect(() => {
     loadMembersData();
+    biometricsStore.syncFromSupabase();
     const handleUpdate = () => loadMembersData();
     window.addEventListener('zona_cero_members_updated', handleUpdate);
     window.addEventListener('zona_cero_wallet_updated', handleUpdate);

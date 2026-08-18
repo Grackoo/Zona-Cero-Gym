@@ -1,4 +1,5 @@
 import { FitnessGoal } from '../types';
+import { supabase } from './supabase';
 
 export interface BiometricMember {
   id: string;
@@ -34,9 +35,50 @@ export interface AccessLog {
 const STORAGE_MEMBERS_KEY = 'zona_cero_biometric_members_v2';
 const STORAGE_LOGS_KEY = 'zona_cero_access_logs_v2';
 
+const isSupabaseReady = () => {
+  return (
+    Boolean(import.meta.env.VITE_SUPABASE_URL) &&
+    !import.meta.env.VITE_SUPABASE_URL.includes('placeholder') &&
+    Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY) &&
+    !import.meta.env.VITE_SUPABASE_ANON_KEY.includes('placeholder')
+  );
+};
+
+const mapDbToMember = (row: any): BiometricMember => ({
+  id: row.id,
+  fullName: row.full_name || 'Sin Nombre',
+  phone: row.phone || '',
+  planType: row.plan_type || 'Mensual Premium',
+  status: (row.status === 'Active' ? 'Activo' : row.status === 'Frozen' ? 'Congelado' : row.status === 'Overdue' ? 'Vencido' : row.status) || 'Activo',
+  avatarUrl: row.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=250&h=250',
+  whatsappConnected: row.whatsapp_connected ?? true,
+  registeredAt: row.created_at ? row.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
+  accessToken: row.access_token || row.id,
+  memberPin: row.member_pin || '1234',
+  birthDate: row.birth_date || undefined,
+  fitnessGoal: (row.fitness_goal as FitnessGoal) || 'salud_general',
+  lastVisit: row.last_visit || undefined
+});
+
+const mapMemberToDb = (m: Partial<BiometricMember>) => {
+  const dbObj: any = {};
+  if (m.id !== undefined) dbObj.id = m.id;
+  if (m.fullName !== undefined) dbObj.full_name = m.fullName;
+  if (m.phone !== undefined) dbObj.phone = m.phone;
+  if (m.planType !== undefined) dbObj.plan_type = m.planType;
+  if (m.status !== undefined) dbObj.status = m.status;
+  if (m.avatarUrl !== undefined) dbObj.avatar_url = m.avatarUrl;
+  if (m.whatsappConnected !== undefined) dbObj.whatsapp_connected = m.whatsappConnected;
+  if (m.accessToken !== undefined) dbObj.access_token = m.accessToken;
+  if (m.memberPin !== undefined) dbObj.member_pin = m.memberPin;
+  if (m.birthDate !== undefined) dbObj.birth_date = m.birthDate;
+  if (m.fitnessGoal !== undefined) dbObj.fitness_goal = m.fitnessGoal;
+  return dbObj;
+};
+
 const INITIAL_MEMBERS: BiometricMember[] = [
   {
-    id: 'ZC-1001',
+    id: 'a1111111-1111-1111-1111-111111111101',
     fullName: 'Carlos Mendoza',
     phone: '+52 55 1234 5678',
     planType: 'Mensual Premium',
@@ -45,13 +87,13 @@ const INITIAL_MEMBERS: BiometricMember[] = [
     whatsappConnected: true,
     registeredAt: '2026-01-15',
     lastVisit: 'Hoy, 08:42 AM',
-    accessToken: 'carlos-mendoza-token-77',
+    accessToken: 'c1111111-1111-1111-1111-111111111101',
     memberPin: '1234',
     birthDate: '1998-04-12',
     fitnessGoal: 'hipertrofia'
   },
   {
-    id: 'ZC-1002',
+    id: 'a1111111-1111-1111-1111-111111111102',
     fullName: 'Elia Hernandez',
     phone: '+52 55 9876 5432',
     planType: 'Anual Premium',
@@ -60,13 +102,13 @@ const INITIAL_MEMBERS: BiometricMember[] = [
     whatsappConnected: true,
     registeredAt: '2026-02-10',
     lastVisit: 'Hoy, 08:15 AM',
-    accessToken: 'elia-hernandez-token-88',
+    accessToken: 'c1111111-1111-1111-1111-111111111102',
     memberPin: '4321',
     birthDate: '2001-09-24',
     fitnessGoal: 'perdida_grasa'
   },
   {
-    id: 'ZC-1003',
+    id: 'a1111111-1111-1111-1111-111111111103',
     fullName: 'Maria Lopez',
     phone: '+52 55 4567 8901',
     planType: 'Mensual Básico',
@@ -75,13 +117,13 @@ const INITIAL_MEMBERS: BiometricMember[] = [
     whatsappConnected: true,
     registeredAt: '2026-01-05',
     lastVisit: 'Hace 4 días (2026-08-12)',
-    accessToken: 'maria-lopez-token-99',
+    accessToken: 'c1111111-1111-1111-1111-111111111103',
     memberPin: '2026',
     birthDate: '1989-11-03',
     fitnessGoal: 'salud_general'
   },
   {
-    id: 'ZC-1004',
+    id: 'a1111111-1111-1111-1111-111111111104',
     fullName: 'Elena Rodriguez',
     phone: '+52 55 2345 6789',
     planType: 'Anual Estándar',
@@ -90,13 +132,13 @@ const INITIAL_MEMBERS: BiometricMember[] = [
     whatsappConnected: true,
     registeredAt: '2025-11-20',
     lastVisit: 'Hace 5 días (2026-08-11)',
-    accessToken: 'elena-rodriguez-token-11',
+    accessToken: 'c1111111-1111-1111-1111-111111111104',
     memberPin: '8888',
     birthDate: '1995-07-19',
     fitnessGoal: 'mantenimiento'
   },
   {
-    id: 'ZC-1005',
+    id: 'a1111111-1111-1111-1111-111111111105',
     fullName: 'Sarah Jenkins',
     phone: '+52 55 8765 4321',
     planType: 'Anual Premium',
@@ -105,13 +147,13 @@ const INITIAL_MEMBERS: BiometricMember[] = [
     whatsappConnected: true,
     registeredAt: '2026-03-01',
     lastVisit: 'Hoy, 07:30 AM',
-    accessToken: 'sarah-jenkins-token-22',
+    accessToken: 'c1111111-1111-1111-1111-111111111105',
     memberPin: '9999',
     birthDate: '1992-03-15',
     fitnessGoal: 'hipertrofia'
   },
   {
-    id: 'ZC-1006',
+    id: 'a1111111-1111-1111-1111-111111111106',
     fullName: 'Roberto Valdés',
     phone: '+52 55 6789 0123',
     planType: 'Mensual Básico',
@@ -120,7 +162,7 @@ const INITIAL_MEMBERS: BiometricMember[] = [
     whatsappConnected: true,
     registeredAt: '2026-02-01',
     lastVisit: 'Hace 3 días (2026-08-13)',
-    accessToken: 'roberto-valdes-token-33',
+    accessToken: 'c1111111-1111-1111-1111-111111111106',
     memberPin: '5555',
     birthDate: '1982-12-05',
     fitnessGoal: 'perdida_grasa'
@@ -130,7 +172,7 @@ const INITIAL_MEMBERS: BiometricMember[] = [
 const INITIAL_LOGS: AccessLog[] = [
   {
     id: 'LOG-9001',
-    memberId: 'ZC-1001',
+    memberId: 'a1111111-1111-1111-1111-111111111101',
     memberName: 'Carlos Mendoza',
     memberAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=250&h=250',
     planType: 'Mensual Premium',
@@ -143,7 +185,7 @@ const INITIAL_LOGS: AccessLog[] = [
   },
   {
     id: 'LOG-9002',
-    memberId: 'ZC-1002',
+    memberId: 'a1111111-1111-1111-1111-111111111102',
     memberName: 'Elia Hernandez',
     memberAvatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=250&h=250',
     planType: 'Anual Premium',
@@ -157,6 +199,78 @@ const INITIAL_LOGS: AccessLog[] = [
 ];
 
 export const biometricsStore = {
+  // Sync members and logs from Supabase
+  async syncFromSupabase(): Promise<void> {
+    if (!isSupabaseReady()) return;
+
+    try {
+      // 1. Fetch Members from Supabase
+      const { data: dbMembers, error: membersError } = await supabase
+        .from('members')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (!membersError && dbMembers) {
+        if (dbMembers.length > 0) {
+          const mappedMembers = dbMembers.map(mapDbToMember);
+          localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(mappedMembers));
+          window.dispatchEvent(new CustomEvent('zona_cero_members_updated'));
+        }
+      } else if (membersError) {
+        console.warn('Error syncing members from Supabase:', membersError);
+      }
+
+      // 2. Fetch Attendance Logs from Supabase
+      const { data: dbLogs, error: logsError } = await supabase
+        .from('attendance_logs')
+        .select(`
+          id,
+          member_id,
+          type,
+          status,
+          similarity,
+          reason,
+          created_at,
+          members (
+            full_name,
+            avatar_url,
+            plan_type
+          )
+        `)
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (!logsError && dbLogs && dbLogs.length > 0) {
+        const mappedLogs: AccessLog[] = dbLogs.map((log: any) => {
+          const logDate = new Date(log.created_at);
+          const hours = logDate.getHours().toString().padStart(2, '0');
+          const minutes = logDate.getMinutes().toString().padStart(2, '0');
+          const timeFormatted = `${hours}:${minutes} ${logDate.getHours() >= 12 ? 'PM' : 'AM'}`;
+          const memberData = log.members;
+
+          return {
+            id: log.id,
+            memberId: log.member_id,
+            memberName: memberData?.full_name || 'Socio Registrado',
+            memberAvatar: memberData?.avatar_url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=250&h=250',
+            planType: memberData?.plan_type || 'Mensual Premium',
+            timestamp: log.created_at,
+            timeFormatted,
+            type: log.type as 'Entrada' | 'Salida',
+            status: log.status as 'Permitido' | 'Denegado',
+            similarity: Number(log.similarity) || 98.0,
+            reason: log.reason || 'Acceso Registrado'
+          };
+        });
+
+        localStorage.setItem(STORAGE_LOGS_KEY, JSON.stringify(mappedLogs));
+        window.dispatchEvent(new CustomEvent('zona_cero_access_updated'));
+      }
+    } catch (e) {
+      console.warn('Error during Supabase sync:', e);
+    }
+  },
+
   getMembers(): BiometricMember[] {
     try {
       const data = localStorage.getItem(STORAGE_MEMBERS_KEY);
@@ -180,10 +294,11 @@ export const biometricsStore = {
     return members.find(m => m.id === id);
   },
 
-  addMember(member: Omit<BiometricMember, 'id' | 'registeredAt' | 'accessToken'> & { accessToken?: string }): BiometricMember {
+  addMember(member: Omit<BiometricMember, 'id' | 'registeredAt' | 'accessToken'> & { id?: string; accessToken?: string }): BiometricMember {
     const members = this.getMembers();
-    const newId = `ZC-${1000 + members.length + 1}`;
-    const generatedToken = member.accessToken || `token-${Math.random().toString(36).substring(2, 10)}-${Date.now().toString(36)}`;
+    const newId = member.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `ZC-${Date.now()}`);
+    const generatedToken = member.accessToken || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `token-${Date.now()}`);
+    
     const newMember: BiometricMember = {
       ...member,
       id: newId,
@@ -194,9 +309,31 @@ export const biometricsStore = {
       lastVisit: 'Recién Registrado',
     };
 
+    // 1. Update local cache immediately for instant UI
     const updated = [newMember, ...members];
     localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(updated));
     window.dispatchEvent(new CustomEvent('zona_cero_members_updated'));
+
+    // 2. Persist asynchronously to Supabase
+    if (isSupabaseReady()) {
+      const dbPayload = mapMemberToDb(newMember);
+      supabase
+        .from('members')
+        .insert(dbPayload)
+        .then(
+          ({ error }) => {
+            if (error) {
+              console.error('❌ Error al guardar miembro en Supabase:', error.message, error.details || error);
+            } else {
+              console.log('✅ Miembro guardado con éxito en Supabase:', newMember.fullName, newMember.id);
+            }
+          },
+          (err) => {
+            console.error('Error de red al insertar en Supabase:', err);
+          }
+        );
+    }
+
     return newMember;
   },
 
@@ -205,6 +342,24 @@ export const biometricsStore = {
     const updated = members.map(m => m.id === id ? { ...m, ...updates } : m);
     localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(updated));
     window.dispatchEvent(new CustomEvent('zona_cero_members_updated'));
+
+    if (isSupabaseReady()) {
+      const dbPayload = mapMemberToDb(updates);
+      supabase
+        .from('members')
+        .update(dbPayload)
+        .eq('id', id)
+        .then(
+          ({ error }) => {
+            if (error) {
+              console.error('❌ Error al actualizar miembro en Supabase:', error.message);
+            } else {
+              console.log('✅ Miembro actualizado en Supabase:', id);
+            }
+          },
+          (err) => console.error('Error al actualizar en Supabase:', err)
+        );
+    }
   },
 
   deleteMember(id: string): void {
@@ -212,6 +367,23 @@ export const biometricsStore = {
     const updated = members.filter(m => m.id !== id);
     localStorage.setItem(STORAGE_MEMBERS_KEY, JSON.stringify(updated));
     window.dispatchEvent(new CustomEvent('zona_cero_members_updated'));
+
+    if (isSupabaseReady()) {
+      supabase
+        .from('members')
+        .delete()
+        .eq('id', id)
+        .then(
+          ({ error }) => {
+            if (error) {
+              console.error('❌ Error al eliminar miembro en Supabase:', error.message);
+            } else {
+              console.log('✅ Miembro eliminado en Supabase:', id);
+            }
+          },
+          (err) => console.error('Error al eliminar en Supabase:', err)
+        );
+    }
   },
 
   getAccessLogs(): AccessLog[] {
@@ -300,6 +472,26 @@ export const biometricsStore = {
     localStorage.setItem(STORAGE_LOGS_KEY, JSON.stringify(logs));
     window.dispatchEvent(new CustomEvent('zona_cero_access_updated'));
 
+    // Save attendance log to Supabase if valid UUID
+    if (isSupabaseReady() && member.id && member.id.includes('-')) {
+      supabase
+        .from('attendance_logs')
+        .insert({
+          member_id: member.id,
+          type: type,
+          status: isAuthorized ? 'Permitido' : 'Denegado',
+          similarity: similarity,
+          reason: reason
+        })
+        .then(
+          ({ error }) => {
+            if (error) console.error('❌ Error al registrar asistencia en Supabase:', error.message);
+            else console.log('✅ Asistencia registrada en Supabase para:', member.fullName);
+          },
+          (err) => console.error('Error al registrar asistencia en Supabase:', err)
+        );
+    }
+
     return { success: isAuthorized, log, member, similarity };
   },
 
@@ -315,3 +507,8 @@ export const biometricsStore = {
     window.dispatchEvent(new CustomEvent('zona_cero_access_updated'));
   }
 };
+
+// Initial sync on module load
+if (typeof window !== 'undefined') {
+  biometricsStore.syncFromSupabase();
+}
