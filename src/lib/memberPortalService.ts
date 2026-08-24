@@ -1,5 +1,6 @@
 import { MemberBiometricsRecord, RoutinePlan, LeaderboardMember, FitnessGoal } from '../types';
 import { biometricsStore, BiometricMember } from './biometricsStore';
+import { gymEquipmentService } from './gymEquipmentService';
 
 const BIOMETRICS_STORAGE_KEY = 'zona_cero_biometrics_history_v1';
 
@@ -186,14 +187,10 @@ export const memberPortalService = {
     }
   },
 
-  // Get routine plan by member goal
+  // Get routine plan by member (custom routine or template by goal)
   getRoutinePlan(member: BiometricMember): RoutinePlan {
     const goal = member.fitnessGoal || 'salud_general';
-    const plan = SAMPLE_ROUTINES[goal] || SAMPLE_ROUTINES['salud_general'];
-    return {
-      ...plan,
-      member_id: member.id
-    };
+    return gymEquipmentService.getRoutineForMember(member.id, goal);
   },
 
   // Get leaderboard with age brackets and goals

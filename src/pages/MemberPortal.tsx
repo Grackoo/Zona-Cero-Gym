@@ -86,6 +86,17 @@ export default function MemberPortal() {
   useEffect(() => {
     if (member && isAuthenticated) {
       loadMemberData(member);
+
+      const handleUpdate = () => loadMemberData(member);
+      window.addEventListener('zona_cero_routines_updated', handleUpdate);
+      window.addEventListener('zona_cero_wallet_updated', handleUpdate);
+      window.addEventListener('zona_cero_biometrics_updated', handleUpdate);
+
+      return () => {
+        window.removeEventListener('zona_cero_routines_updated', handleUpdate);
+        window.removeEventListener('zona_cero_wallet_updated', handleUpdate);
+        window.removeEventListener('zona_cero_biometrics_updated', handleUpdate);
+      };
     }
   }, [member, isAuthenticated]);
 

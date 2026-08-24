@@ -15,6 +15,18 @@ export interface Member {
   fitness_goal?: FitnessGoal;
 }
 
+export interface GymMachine {
+  id: string;
+  name: string;
+  code: string;
+  category: 'Pierna' | 'Pecho' | 'Espalda' | 'Hombro / Brazo' | 'Cardio' | 'Funcional / Core';
+  zone: string;
+  status: 'Disponible' | 'En Mantenimiento' | 'Fuera de Servicio';
+  target_muscles: string[];
+  image_url?: string;
+  notes?: string;
+}
+
 export interface Product {
   id: string;
   name: string;

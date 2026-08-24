@@ -21,8 +21,10 @@ import {
   Check,
   Clock,
   Sparkles,
-  Smartphone
+  Smartphone,
+  Dumbbell
 } from 'lucide-react';
+import { RoutineBuilderModal } from '../components/RoutineBuilderModal';
 
 export default function Members() {
   const navigate = useNavigate();
@@ -34,6 +36,10 @@ export default function Members() {
   const [retentionFilter, setRetentionFilter] = useState(false);
   const [memberToDelete, setMemberToDelete] = useState<BiometricMember | null>(null);
   const [copiedTokenId, setCopiedTokenId] = useState<string | null>(null);
+  
+  // Routine modal state
+  const [isRoutineModalOpen, setIsRoutineModalOpen] = useState(false);
+  const [targetRoutineMember, setTargetRoutineMember] = useState<BiometricMember | null>(null);
 
   useEffect(() => {
     loadMembersData();
@@ -93,13 +99,25 @@ export default function Members() {
         title="Directorio de Miembros"
         subtitle="Administra membresías, monederos electrónicos y portales interactivos de clientes."
       >
-        <button 
-          onClick={() => navigate('/access')}
-          className="bg-cero-lime text-black font-bold px-4 py-2 rounded-lg ml-auto hover:bg-cero-lime-hover transition-colors text-sm flex items-center gap-2 cursor-pointer"
-        >
-          <UserPlus size={16} />
-          + Añadir Miembro Biométrico
-        </button>
+        <div className="flex items-center gap-2 ml-auto">
+          <button 
+            onClick={() => {
+              setTargetRoutineMember(null);
+              setIsRoutineModalOpen(true);
+            }}
+            className="border border-cero-lime/40 text-cero-lime bg-cero-lime/10 font-bold px-3.5 py-2 rounded-lg hover:bg-cero-lime/20 transition-all text-sm flex items-center gap-2 cursor-pointer shadow-sm"
+          >
+            <Dumbbell size={16} />
+            Diseñar Rutinas
+          </button>
+          <button 
+            onClick={() => navigate('/access')}
+            className="bg-cero-lime text-black font-bold px-4 py-2 rounded-lg hover:bg-cero-lime-hover transition-colors text-sm flex items-center gap-2 cursor-pointer shadow-md"
+          >
+            <UserPlus size={16} />
+            + Añadir Miembro Biométrico
+          </button>
+        </div>
       </PageHeader>
 
       <div className="p-8 space-y-8">
@@ -288,12 +306,25 @@ export default function Members() {
                         {/* Portal & Actions */}
                         <td className="px-6 py-4 text-right">
                           <div className="flex items-center justify-end gap-2">
+                            {/* Assign / Edit Routine Button */}
+                            <button
+                              onClick={() => {
+                                setTargetRoutineMember(member);
+                                setIsRoutineModalOpen(true);
+                              }}
+                              className="text-xs bg-[#1e293b] hover:bg-cero-lime hover:text-black text-cero-lime px-2.5 py-1.5 rounded-lg border border-cero-lime/30 hover:border-cero-lime transition-all inline-flex items-center gap-1.5 font-bold cursor-pointer shadow-sm"
+                              title="Diseñar o editar rutina con máquinas para este socio"
+                            >
+                              <Dumbbell size={13} />
+                              Rutina
+                            </button>
+
                             {/* Superlink / Member Portal Button */}
                             <a
                               href={`/portal/${member.accessToken || member.id}`}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-xs bg-[#10161c] hover:bg-cero-lime hover:text-black text-white px-3 py-1.5 rounded-lg border border-cero-border transition-all inline-flex items-center gap-1 font-semibold"
+                              className="text-xs bg-[#10161c] hover:bg-white hover:text-black text-gray-200 px-2.5 py-1.5 rounded-lg border border-cero-border transition-all inline-flex items-center gap-1 font-semibold"
                               title="Abrir Portal Público del Miembro"
                             >
                               <Smartphone size={13} />
@@ -302,7 +333,7 @@ export default function Members() {
 
                             <button
                               onClick={() => handleCopyPortalLink(member)}
-                              className="p-1.5 text-cero-text-muted hover:text-white bg-[#10161c] border border-cero-border rounded-lg transition-colors"
+                              className="p-1.5 text-cero-text-muted hover:text-white bg-[#10161c] border border-cero-border rounded-lg transition-colors cursor-pointer"
                               title="Copiar Enlace del Portal"
                             >
                               {copiedTokenId === member.id ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
@@ -342,6 +373,17 @@ export default function Members() {
             <div>Mostrando {filteredMembers.length} de {members.length} miembros registrados</div>
           </div>
         </div>
+
+        {/* Routine Builder Modal */}
+        <RoutineBuilderModal
+          isOpen={isRoutineModalOpen}
+          onClose={() => {
+            setIsRoutineModalOpen(false);
+            setTargetRoutineMember(null);
+          }}
+          targetMember={targetRoutineMember}
+          onSaved={() => loadMembersData()}
+        />
 
         {/* Delete Confirmation Modal */}
         {memberToDelete && (
