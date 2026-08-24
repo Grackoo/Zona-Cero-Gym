@@ -24,12 +24,41 @@ export interface AccessLog {
   memberName: string;
   memberAvatar: string;
   planType: string;
-  timestamp: string;
-  timeFormatted: string;
+  timestamp: string; // ISO 8601 string
+  dateFormatted: string; // e.g. "23/08/2026"
+  timeFormatted: string; // e.g. "08:42 AM"
   type: 'Entrada' | 'Salida';
   status: 'Permitido' | 'Denegado';
   reason: string;
   similarity: number;
+  coachOnDuty: string;
+  shift: 'Mañana' | 'Tarde/Noche';
+  durationMinutes?: number; // Calculated on 'Salida'
+}
+
+export interface CoachAnalytics {
+  name: string;
+  role: string;
+  shift: 'Mañana' | 'Tarde/Noche';
+  shiftHours: string;
+  totalCheckins: number;
+  percentage: number;
+  avgDurationMinutes: number;
+  uniqueMembers: number;
+  avatarUrl: string;
+}
+
+export interface AttendanceAnalytics {
+  totalEntradas: number;
+  totalSalidas: number;
+  currentlyInsideCount: number;
+  currentlyInsideMembers: { id: string; fullName: string; avatarUrl: string; enteredAt: string; timeInsideFormatted: string }[];
+  peakHour: string;
+  peakHourCount: number;
+  avgDurationMinutes: number;
+  hourlyData: { hour: string; label: string; entradas: number; salidas: number; coach: string; shift: 'Mañana' | 'Tarde/Noche' }[];
+  coaches: CoachAnalytics[];
+  preferredCoach: CoachAnalytics;
 }
 
 const STORAGE_MEMBERS_KEY = 'zona_cero_biometric_members_v2';
@@ -43,6 +72,28 @@ const isSupabaseReady = () => {
     !import.meta.env.VITE_SUPABASE_ANON_KEY.includes('placeholder')
   );
 };
+
+// Determines Coach on duty based on hour of day
+export function getCoachAndShiftForTimestamp(date: Date = new Date()): { coachName: string; shift: 'Mañana' | 'Tarde/Noche'; shiftHours: string; avatarUrl: string } {
+  const hour = date.getHours();
+  // Turno Mañana: 06:00 a 13:59 (Coach Valeria Mendez)
+  // Turno Tarde/Noche: 14:00 a 22:59 (Coach Marcos Rios)
+  if (hour >= 6 && hour < 14) {
+    return {
+      coachName: 'Coach Valeria Mendez',
+      shift: 'Mañana',
+      shiftHours: '06:00 - 14:00',
+      avatarUrl: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=250&h=250'
+    };
+  } else {
+    return {
+      coachName: 'Coach Marcos Rios',
+      shift: 'Tarde/Noche',
+      shiftHours: '14:00 - 22:00',
+      avatarUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=250&h=250'
+    };
+  }
+}
 
 const mapDbToMember = (row: any): BiometricMember => ({
   id: row.id,
@@ -116,7 +167,7 @@ const INITIAL_MEMBERS: BiometricMember[] = [
     avatarUrl: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&q=80&w=250&h=250',
     whatsappConnected: true,
     registeredAt: '2026-01-05',
-    lastVisit: 'Hace 4 días (2026-08-12)',
+    lastVisit: 'Ayer, 06:15 PM',
     accessToken: 'c1111111-1111-1111-1111-111111111103',
     memberPin: '2026',
     birthDate: '1989-11-03',
@@ -131,7 +182,7 @@ const INITIAL_MEMBERS: BiometricMember[] = [
     avatarUrl: 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&q=80&w=250&h=250',
     whatsappConnected: true,
     registeredAt: '2025-11-20',
-    lastVisit: 'Hace 5 días (2026-08-11)',
+    lastVisit: 'Hoy, 07:10 AM',
     accessToken: 'c1111111-1111-1111-1111-111111111104',
     memberPin: '8888',
     birthDate: '1995-07-19',
@@ -146,7 +197,7 @@ const INITIAL_MEMBERS: BiometricMember[] = [
     avatarUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=250&h=250',
     whatsappConnected: true,
     registeredAt: '2026-03-01',
-    lastVisit: 'Hoy, 07:30 AM',
+    lastVisit: 'Hoy, 06:45 PM',
     accessToken: 'c1111111-1111-1111-1111-111111111105',
     memberPin: '9999',
     birthDate: '1992-03-15',
@@ -161,7 +212,7 @@ const INITIAL_MEMBERS: BiometricMember[] = [
     avatarUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=250&h=250',
     whatsappConnected: true,
     registeredAt: '2026-02-01',
-    lastVisit: 'Hace 3 días (2026-08-13)',
+    lastVisit: 'Hace 2 días',
     accessToken: 'c1111111-1111-1111-1111-111111111106',
     memberPin: '5555',
     birthDate: '1982-12-05',
@@ -169,32 +220,97 @@ const INITIAL_MEMBERS: BiometricMember[] = [
   }
 ];
 
+const createSampleDate = (hoursAgo: number) => {
+  const d = new Date(Date.now() - 1000 * 60 * 60 * hoursAgo);
+  return d;
+};
+
 const INITIAL_LOGS: AccessLog[] = [
+  // Today evening (Coach Marcos)
   {
-    id: 'LOG-9001',
+    id: 'LOG-9005',
+    memberId: 'a1111111-1111-1111-1111-111111111105',
+    memberName: 'Sarah Jenkins',
+    memberAvatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=250&h=250',
+    planType: 'Anual Premium',
+    timestamp: createSampleDate(1).toISOString(),
+    dateFormatted: createSampleDate(1).toLocaleDateString('es-MX'),
+    timeFormatted: '06:45 PM',
+    type: 'Entrada',
+    status: 'Permitido',
+    similarity: 98.9,
+    coachOnDuty: 'Coach Marcos Rios',
+    shift: 'Tarde/Noche',
+    reason: 'Membresía Activa • Entrada registrada (Coach Marcos Rios en turno - Tarde/Noche) • Rostro 98.9%'
+  },
+  // Today morning (Coach Valeria) - Salida
+  {
+    id: 'LOG-9004',
     memberId: 'a1111111-1111-1111-1111-111111111101',
     memberName: 'Carlos Mendoza',
     memberAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=250&h=250',
     planType: 'Mensual Premium',
-    timestamp: new Date(Date.now() - 1000 * 60 * 18).toISOString(),
+    timestamp: createSampleDate(10).toISOString(),
+    dateFormatted: createSampleDate(10).toLocaleDateString('es-MX'),
+    timeFormatted: '10:05 AM',
+    type: 'Salida',
+    status: 'Permitido',
+    similarity: 98.1,
+    coachOnDuty: 'Coach Valeria Mendez',
+    shift: 'Mañana',
+    durationMinutes: 83,
+    reason: 'Salida registrada • Tiempo en gym: 1h 23m (Coach Valeria Mendez en turno)'
+  },
+  // Today morning (Coach Valeria) - Entrada
+  {
+    id: 'LOG-9003',
+    memberId: 'a1111111-1111-1111-1111-111111111101',
+    memberName: 'Carlos Mendoza',
+    memberAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=250&h=250',
+    planType: 'Mensual Premium',
+    timestamp: createSampleDate(11.5).toISOString(),
+    dateFormatted: createSampleDate(11.5).toLocaleDateString('es-MX'),
     timeFormatted: '08:42 AM',
     type: 'Entrada',
     status: 'Permitido',
     similarity: 98.4,
-    reason: 'Membresía Activa - Coincidencia Facial 98.4% (>= 95% Requerido)'
+    coachOnDuty: 'Coach Valeria Mendez',
+    shift: 'Mañana',
+    reason: 'Membresía Activa • Entrada registrada (Coach Valeria Mendez en turno - Mañana) • Rostro 98.4%'
   },
+  // Today morning (Coach Valeria)
   {
     id: 'LOG-9002',
     memberId: 'a1111111-1111-1111-1111-111111111102',
     memberName: 'Elia Hernandez',
     memberAvatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=250&h=250',
     planType: 'Anual Premium',
-    timestamp: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
+    timestamp: createSampleDate(12).toISOString(),
+    dateFormatted: createSampleDate(12).toLocaleDateString('es-MX'),
     timeFormatted: '08:15 AM',
-    type: 'Salida',
+    type: 'Entrada',
     status: 'Permitido',
     similarity: 99.1,
-    reason: 'Membresía Activa - Coincidencia Facial 99.1% (>= 95% Requerido)'
+    coachOnDuty: 'Coach Valeria Mendez',
+    shift: 'Mañana',
+    reason: 'Membresía Activa • Entrada registrada (Coach Valeria Mendez en turno - Mañana) • Rostro 99.1%'
+  },
+  // Yesterday evening (Coach Marcos)
+  {
+    id: 'LOG-9001',
+    memberId: 'a1111111-1111-1111-1111-111111111103',
+    memberName: 'Maria Lopez',
+    memberAvatar: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&q=80&w=250&h=250',
+    planType: 'Mensual Básico',
+    timestamp: createSampleDate(26).toISOString(),
+    dateFormatted: createSampleDate(26).toLocaleDateString('es-MX'),
+    timeFormatted: '06:15 PM',
+    type: 'Entrada',
+    status: 'Permitido',
+    similarity: 97.6,
+    coachOnDuty: 'Coach Marcos Rios',
+    shift: 'Tarde/Noche',
+    reason: 'Membresía Activa • Entrada registrada (Coach Marcos Rios en turno - Tarde/Noche)'
   }
 ];
 
@@ -238,7 +354,7 @@ export const biometricsStore = {
           )
         `)
         .order('created_at', { ascending: false })
-        .limit(50);
+        .limit(100);
 
       if (!logsError && dbLogs && dbLogs.length > 0) {
         const mappedLogs: AccessLog[] = dbLogs.map((log: any) => {
@@ -246,7 +362,9 @@ export const biometricsStore = {
           const hours = logDate.getHours().toString().padStart(2, '0');
           const minutes = logDate.getMinutes().toString().padStart(2, '0');
           const timeFormatted = `${hours}:${minutes} ${logDate.getHours() >= 12 ? 'PM' : 'AM'}`;
+          const dateFormatted = logDate.toLocaleDateString('es-MX');
           const memberData = log.members;
+          const coachInfo = getCoachAndShiftForTimestamp(logDate);
 
           return {
             id: log.id,
@@ -255,10 +373,13 @@ export const biometricsStore = {
             memberAvatar: memberData?.avatar_url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=250&h=250',
             planType: memberData?.plan_type || 'Mensual Premium',
             timestamp: log.created_at,
+            dateFormatted,
             timeFormatted,
-            type: log.type as 'Entrada' | 'Salida',
-            status: log.status as 'Permitido' | 'Denegado',
+            type: (log.type as 'Entrada' | 'Salida') || 'Entrada',
+            status: (log.status as 'Permitido' | 'Denegado') || 'Permitido',
             similarity: Number(log.similarity) || 98.0,
+            coachOnDuty: coachInfo.coachName,
+            shift: coachInfo.shift,
             reason: log.reason || 'Acceso Registrado'
           };
         });
@@ -292,6 +413,24 @@ export const biometricsStore = {
   getMemberById(id: string): BiometricMember | undefined {
     const members = this.getMembers();
     return members.find(m => m.id === id);
+  },
+
+  // Check if a member is currently inside the gym (latest permitted log is 'Entrada')
+  isMemberCurrentlyInside(memberId: string): boolean {
+    const logs = this.getAccessLogs();
+    const memberLogs = logs.filter(l => l.memberId === memberId && l.status === 'Permitido');
+    if (memberLogs.length === 0) return false;
+    return memberLogs[0].type === 'Entrada';
+  },
+
+  // Get the active entry log for an inside member
+  getActiveEntryLog(memberId: string): AccessLog | undefined {
+    const logs = this.getAccessLogs();
+    const memberLogs = logs.filter(l => l.memberId === memberId && l.status === 'Permitido');
+    if (memberLogs.length > 0 && memberLogs[0].type === 'Entrada') {
+      return memberLogs[0];
+    }
+    return undefined;
   },
 
   addMember(member: Omit<BiometricMember, 'id' | 'registeredAt' | 'accessToken'> & { id?: string; accessToken?: string }): BiometricMember {
@@ -399,11 +538,26 @@ export const biometricsStore = {
     }
   },
 
+  /**
+   * Registers biometric access with Intelligent Auto-Detection of 'Entrada' vs 'Salida'
+   * @param memberId Target member ID
+   * @param requestedType 'Auto' (default: automatically toggles Entrada/Salida), 'Entrada', or 'Salida'
+   * @param forcedSimilarity Optional test similarity score
+   */
   registerAccess(
     memberId: string, 
-    type: 'Entrada' | 'Salida' = 'Entrada',
+    requestedType: 'Entrada' | 'Salida' | 'Auto' = 'Auto',
     forcedSimilarity?: number
-  ): { success: boolean; log: AccessLog; member?: BiometricMember; similarity: number } {
+  ): { 
+    success: boolean; 
+    log: AccessLog; 
+    member?: BiometricMember; 
+    similarity: number; 
+    actionType: 'Entrada' | 'Salida';
+    durationMinutes?: number;
+    coachOnDuty: string;
+    shift: 'Mañana' | 'Tarde/Noche';
+  } {
     const members = this.getMembers();
     const member = members.find(m => m.id === memberId);
 
@@ -411,6 +565,8 @@ export const biometricsStore = {
     const hours = now.getHours().toString().padStart(2, '0');
     const minutes = now.getMinutes().toString().padStart(2, '0');
     const timeFormatted = `${hours}:${minutes} ${now.getHours() >= 12 ? 'PM' : 'AM'}`;
+    const dateFormatted = now.toLocaleDateString('es-MX');
+    const coachInfo = getCoachAndShiftForTimestamp(now);
 
     if (!member) {
       const similarity = forcedSimilarity ?? parseFloat((Math.random() * 40 + 30).toFixed(1));
@@ -421,16 +577,26 @@ export const biometricsStore = {
         memberAvatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=250&h=250',
         planType: 'Ninguno',
         timestamp: now.toISOString(),
+        dateFormatted,
         timeFormatted,
-        type,
+        type: requestedType === 'Salida' ? 'Salida' : 'Entrada',
         status: 'Denegado',
         similarity,
-        reason: `Rostro no encontrado en el sistema (${similarity}% efectividad)`
+        coachOnDuty: coachInfo.coachName,
+        shift: coachInfo.shift,
+        reason: `Rostro no reconocido en el sistema (${similarity}% efectividad)`
       };
-      const logs = [log, ...this.getAccessLogs()].slice(0, 50);
+      const logs = [log, ...this.getAccessLogs()].slice(0, 100);
       localStorage.setItem(STORAGE_LOGS_KEY, JSON.stringify(logs));
       window.dispatchEvent(new CustomEvent('zona_cero_access_updated'));
-      return { success: false, log, similarity };
+      return { 
+        success: false, 
+        log, 
+        similarity, 
+        actionType: log.type, 
+        coachOnDuty: coachInfo.coachName, 
+        shift: coachInfo.shift 
+      };
     }
 
     // Determine biometric similarity
@@ -441,13 +607,51 @@ export const biometricsStore = {
     const isPlanActive = member.status === 'Activo';
     const isAuthorized = meetsBiometricThreshold && isPlanActive;
 
+    // INTELLIGENT AUTO-TOGGLE:
+    // If requestedType === 'Auto', check if member is currently inside
+    let determinedType: 'Entrada' | 'Salida' = 'Entrada';
+    let durationMinutes: number | undefined;
+
+    if (requestedType === 'Auto' || !requestedType) {
+      const isInside = this.isMemberCurrentlyInside(member.id);
+      if (isInside) {
+        determinedType = 'Salida';
+        const entryLog = this.getActiveEntryLog(member.id);
+        if (entryLog) {
+          const entryTime = new Date(entryLog.timestamp).getTime();
+          durationMinutes = Math.max(1, Math.round((now.getTime() - entryTime) / (1000 * 60)));
+        }
+      } else {
+        determinedType = 'Entrada';
+      }
+    } else {
+      determinedType = requestedType;
+      if (determinedType === 'Salida') {
+        const entryLog = this.getActiveEntryLog(member.id);
+        if (entryLog) {
+          const entryTime = new Date(entryLog.timestamp).getTime();
+          durationMinutes = Math.max(1, Math.round((now.getTime() - entryTime) / (1000 * 60)));
+        }
+      }
+    }
+
+    // Reason description
     let reason = '';
     if (!meetsBiometricThreshold) {
       reason = `Similitud insuficiente (${similarity}% < 95.0% requerido)`;
     } else if (!isPlanActive) {
       reason = `Acceso Denegado: Membresía en estado '${member.status}' (Efectividad ${similarity}%)`;
     } else {
-      reason = `Membresía Activa - Coincidencia Facial ${similarity}% (Efectividad > 95% Cumplida)`;
+      if (determinedType === 'Entrada') {
+        reason = `Membresía Activa • Entrada registrada (${coachInfo.coachName} en turno - ${coachInfo.shift}) • Rostro ${similarity}%`;
+      } else {
+        const durationStr = durationMinutes 
+          ? (durationMinutes >= 60 
+              ? `${Math.floor(durationMinutes / 60)}h ${durationMinutes % 60}m` 
+              : `${durationMinutes} min`)
+          : 'Sesión completada';
+        reason = `Salida registrada • Tiempo en gym: ${durationStr} (${coachInfo.coachName} en turno)`;
+      }
     }
 
     const log: AccessLog = {
@@ -457,18 +661,24 @@ export const biometricsStore = {
       memberAvatar: member.avatarUrl,
       planType: member.planType,
       timestamp: now.toISOString(),
+      dateFormatted,
       timeFormatted,
-      type,
+      type: determinedType,
       status: isAuthorized ? 'Permitido' : 'Denegado',
       similarity,
+      coachOnDuty: coachInfo.coachName,
+      shift: coachInfo.shift,
+      durationMinutes,
       reason
     };
 
     if (isAuthorized) {
-      this.updateMember(member.id, { lastVisit: `Hoy, ${timeFormatted}` });
+      this.updateMember(member.id, { 
+        lastVisit: determinedType === 'Entrada' ? `Hoy, ${timeFormatted} (Entrada)` : `Hoy, ${timeFormatted} (Salida)`
+      });
     }
 
-    const logs = [log, ...this.getAccessLogs()].slice(0, 50);
+    const logs = [log, ...this.getAccessLogs()].slice(0, 100);
     localStorage.setItem(STORAGE_LOGS_KEY, JSON.stringify(logs));
     window.dispatchEvent(new CustomEvent('zona_cero_access_updated'));
 
@@ -478,7 +688,7 @@ export const biometricsStore = {
         .from('attendance_logs')
         .insert({
           member_id: member.id,
-          type: type,
+          type: determinedType,
           status: isAuthorized ? 'Permitido' : 'Denegado',
           similarity: similarity,
           reason: reason
@@ -486,13 +696,148 @@ export const biometricsStore = {
         .then(
           ({ error }) => {
             if (error) console.error('❌ Error al registrar asistencia en Supabase:', error.message);
-            else console.log('✅ Asistencia registrada en Supabase para:', member.fullName);
+            else console.log(`✅ ${determinedType} registrada en Supabase para:`, member.fullName);
           },
           (err) => console.error('Error al registrar asistencia en Supabase:', err)
         );
     }
 
-    return { success: isAuthorized, log, member, similarity };
+    return { 
+      success: isAuthorized, 
+      log, 
+      member, 
+      similarity, 
+      actionType: determinedType, 
+      durationMinutes,
+      coachOnDuty: coachInfo.coachName,
+      shift: coachInfo.shift
+    };
+  },
+
+  // Comprehensive analytics calculation for admin reports
+  getAttendanceAnalytics(): AttendanceAnalytics {
+    const logs = this.getAccessLogs();
+    const members = this.getMembers();
+
+    const allowedLogs = logs.filter(l => l.status === 'Permitido');
+    const entradas = allowedLogs.filter(l => l.type === 'Entrada');
+    const salidas = allowedLogs.filter(l => l.type === 'Salida');
+
+    // Currently inside calculation
+    const currentlyInsideMembers: { id: string; fullName: string; avatarUrl: string; enteredAt: string; timeInsideFormatted: string }[] = [];
+    const now = Date.now();
+
+    members.forEach(member => {
+      if (this.isMemberCurrentlyInside(member.id)) {
+        const entryLog = this.getActiveEntryLog(member.id);
+        const enteredAt = entryLog ? entryLog.timeFormatted : 'Hoy';
+        let timeInsideFormatted = 'En sesión';
+        if (entryLog) {
+          const diffMin = Math.max(1, Math.round((now - new Date(entryLog.timestamp).getTime()) / (1000 * 60)));
+          timeInsideFormatted = diffMin >= 60 ? `${Math.floor(diffMin / 60)}h ${diffMin % 60}m` : `${diffMin} min`;
+        }
+        currentlyInsideMembers.push({
+          id: member.id,
+          fullName: member.fullName,
+          avatarUrl: member.avatarUrl,
+          enteredAt,
+          timeInsideFormatted
+        });
+      }
+    });
+
+    // Hourly distribution for 6:00 to 22:00
+    const hoursSlots = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22];
+    const hourlyData = hoursSlots.map(h => {
+      const label = `${h.toString().padStart(2, '0')}:00`;
+      const isMorning = h < 14;
+      const coach = isMorning ? 'Coach Valeria Mendez' : 'Coach Marcos Rios';
+      const shift: 'Mañana' | 'Tarde/Noche' = isMorning ? 'Mañana' : 'Tarde/Noche';
+
+      const countEntradas = entradas.filter(l => {
+        const logHour = new Date(l.timestamp).getHours();
+        return logHour === h;
+      }).length;
+
+      const countSalidas = salidas.filter(l => {
+        const logHour = new Date(l.timestamp).getHours();
+        return logHour === h;
+      }).length;
+
+      return {
+        hour: `${h}:00`,
+        label,
+        entradas: countEntradas,
+        salidas: countSalidas,
+        coach,
+        shift
+      };
+    });
+
+    // Peak Hour calculation
+    let maxHour = hourlyData[0];
+    hourlyData.forEach(hd => {
+      if (hd.entradas > (maxHour?.entradas || 0)) {
+        maxHour = hd;
+      }
+    });
+
+    // Coach preference calculation
+    const valeriaLogs = entradas.filter(l => l.coachOnDuty.includes('Valeria') || l.shift === 'Mañana');
+    const marcosLogs = entradas.filter(l => l.coachOnDuty.includes('Marcos') || l.shift === 'Tarde/Noche');
+
+    const totalCheckins = entradas.length || 1;
+    const valeriaPercentage = Math.round((valeriaLogs.length / totalCheckins) * 100);
+    const marcosPercentage = Math.round((marcosLogs.length / totalCheckins) * 100);
+
+    // Calculate average session duration in minutes
+    const logsWithDuration = salidas.filter(l => typeof l.durationMinutes === 'number' && l.durationMinutes > 0);
+    const totalDuration = logsWithDuration.reduce((acc, l) => acc + (l.durationMinutes || 0), 0);
+    const avgDuration = logsWithDuration.length > 0 ? Math.round(totalDuration / logsWithDuration.length) : 65;
+
+    // Unique members per coach
+    const valeriaUniqueMembers = new Set(valeriaLogs.map(l => l.memberId)).size;
+    const marcosUniqueMembers = new Set(marcosLogs.map(l => l.memberId)).size;
+
+    const coaches: CoachAnalytics[] = [
+      {
+        name: 'Coach Valeria Mendez',
+        role: 'Coach Matutina & Nutrición Deportiva',
+        shift: 'Mañana',
+        shiftHours: '06:00 AM - 02:00 PM',
+        totalCheckins: valeriaLogs.length,
+        percentage: valeriaPercentage,
+        avgDurationMinutes: 62,
+        uniqueMembers: valeriaUniqueMembers,
+        avatarUrl: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=250&h=250'
+      },
+      {
+        name: 'Coach Marcos Rios',
+        role: 'Coach Vespertino & Fuerza / HIIT',
+        shift: 'Tarde/Noche',
+        shiftHours: '02:00 PM - 10:00 PM',
+        totalCheckins: marcosLogs.length,
+        percentage: marcosPercentage,
+        avgDurationMinutes: 71,
+        uniqueMembers: marcosUniqueMembers,
+        avatarUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=250&h=250'
+      }
+    ];
+
+    const preferredCoach = coaches[0].totalCheckins >= coaches[1].totalCheckins ? coaches[0] : coaches[1];
+
+    return {
+      totalEntradas: entradas.length,
+      totalSalidas: salidas.length,
+      currentlyInsideCount: currentlyInsideMembers.length,
+      currentlyInsideMembers,
+      peakHour: maxHour ? `${maxHour.label} - ${(parseInt(maxHour.hour) + 1)}:00` : '19:00 - 20:00',
+      peakHourCount: maxHour?.entradas || 0,
+      avgDurationMinutes: avgDuration,
+      hourlyData,
+      coaches,
+      preferredCoach
+    };
   },
 
   clearLogs(): void {

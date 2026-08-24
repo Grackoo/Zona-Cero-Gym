@@ -39,9 +39,11 @@ import {
   EyeOff,
   Eye,
   Gauge,
-  Wallet
+  Wallet,
+  Clock
 } from 'lucide-react';
 import { walletService, DAILY_REWARD_AMOUNT } from '../lib/walletService';
+import { getCoachAndShiftForTimestamp } from '../lib/biometricsStore';
 
 const SAMPLE_AVATARS = [
   { label: 'Rostro 1 (Atleta M)', url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=250&h=250' },
@@ -56,7 +58,7 @@ export default function AccessControl() {
   const [members, setMembers] = useState<BiometricMember[]>([]);
   const [logs, setLogs] = useState<AccessLog[]>([]);
   const [activeTab, setActiveTab] = useState<'scanner' | 'register' | 'directory'>('scanner');
-  const [accessType, setAccessType] = useState<'Entrada' | 'Salida'>('Entrada');
+  const [accessMode, setAccessMode] = useState<'Auto' | 'Entrada' | 'Salida'>('Auto');
 
   // Live scanner states
   const [isCameraActive, setIsCameraActive] = useState(false);
@@ -74,6 +76,10 @@ export default function AccessControl() {
     log: AccessLog;
     success: boolean;
     similarity: number;
+    actionType?: 'Entrada' | 'Salida';
+    durationMinutes?: number;
+    coachOnDuty?: string;
+    shift?: 'Mañana' | 'Tarde/Noche';
   } | null>(null);
 
   const [rewardNotice, setRewardNotice] = useState<{
@@ -152,7 +158,7 @@ export default function AccessControl() {
     return () => {
       if (continuousTimerRef.current) clearInterval(continuousTimerRef.current);
     };
-  }, [activeTab, continuousMode, accessType, members]);
+  }, [activeTab, continuousMode, accessMode, members]);
 
   // Start webcam
   const startCamera = async (targetVideoRef: React.RefObject<HTMLVideoElement | null>) => {
@@ -264,16 +270,22 @@ export default function AccessControl() {
     // 4. MATCH CONFIRMED (>= 95.0%) -> Trigger automated access!
     if (match.bestMemberId) {
       isCooldownRef.current = true;
-      setScanningStatusText(`¡ACCESO CONCEDIDO! (${match.similarity}% > 95%)`);
 
-      const result = biometricsStore.registerAccess(match.bestMemberId, accessType, match.similarity);
+      const result = biometricsStore.registerAccess(match.bestMemberId, accessMode, match.similarity);
       setScanResult(result);
 
-      if (result.success && accessType === 'Entrada') {
-        walletService.grantCheckinReward(match.bestMemberId).then(reward => {
-          setRewardNotice(reward);
-        });
+      if (result.actionType === 'Entrada') {
+        setScanningStatusText(`¡ENTRADA AUTORIZADA! (${match.similarity}% > 95%) • ${result.coachOnDuty}`);
+        if (result.success) {
+          walletService.grantCheckinReward(match.bestMemberId).then(reward => {
+            setRewardNotice(reward);
+          });
+        }
       } else {
+        const durationText = result.durationMinutes 
+          ? (result.durationMinutes >= 60 ? `${Math.floor(result.durationMinutes / 60)}h ${result.durationMinutes % 60}m` : `${result.durationMinutes} min`)
+          : 'Sesión completada';
+        setScanningStatusText(`¡SALIDA REGISTRADA! (${match.similarity}% > 95%) • Tiempo: ${durationText}`);
         setRewardNotice(null);
       }
 
@@ -300,20 +312,27 @@ export default function AccessControl() {
 
       if (targetMember && (!customSimilarity || customSimilarity >= 95.0)) {
         const sim = customSimilarity ?? parseFloat((96.8 + Math.random() * 2.8).toFixed(1));
-        const result = biometricsStore.registerAccess(targetMember.id, accessType, sim);
+        const result = biometricsStore.registerAccess(targetMember.id, accessMode, sim);
         setScanResult(result);
         setLiveSimScore(sim);
 
-        if (result.success && accessType === 'Entrada') {
-          walletService.grantCheckinReward(targetMember.id).then(reward => {
-            setRewardNotice(reward);
-          });
+        if (result.actionType === 'Entrada') {
+          setScanningStatusText(`¡ENTRADA AUTORIZADA! (${sim}%) • ${result.coachOnDuty}`);
+          if (result.success) {
+            walletService.grantCheckinReward(targetMember.id).then(reward => {
+              setRewardNotice(reward);
+            });
+          }
         } else {
+          const durationText = result.durationMinutes 
+            ? (result.durationMinutes >= 60 ? `${Math.floor(result.durationMinutes / 60)}h ${result.durationMinutes % 60}m` : `${result.durationMinutes} min`)
+            : 'Sesión completada';
+          setScanningStatusText(`¡SALIDA REGISTRADA! (${sim}%) • Tiempo: ${durationText}`);
           setRewardNotice(null);
         }
       } else {
         const sim = customSimilarity ?? parseFloat((78.0 + Math.random() * 12.0).toFixed(1));
-        const result = biometricsStore.registerAccess('UNKNOWN', accessType, sim);
+        const result = biometricsStore.registerAccess('UNKNOWN', accessMode, sim);
         setScanResult(result);
         setLiveSimScore(sim);
         setRewardNotice(null);
@@ -322,8 +341,8 @@ export default function AccessControl() {
       setTimeout(() => {
         isCooldownRef.current = false;
         setScanningStatusText('ESCANEO CONTINUO ACTIVO');
-      }, 2000);
-    }, 400);
+      }, 2500);
+    }, 300);
   };
 
   // Delete Member Confirmation
@@ -523,37 +542,60 @@ export default function AccessControl() {
                     <div className={`w-3 h-3 rounded-full ${cameraCoveredAlert ? 'bg-rose-500 animate-ping' : 'bg-emerald-400 animate-ping'}`}></div>
                     <div>
                       <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                        Tótem de Acceso Continuo
-                        <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 text-[10px] font-mono rounded border border-emerald-500/20 font-normal">
-                          AUTOMÁTICO
+                        Tótem de Acceso Inteligente
+                        <span className="px-2 py-0.5 bg-cero-lime/10 text-cero-lime text-[10px] font-mono rounded border border-cero-lime/20 font-bold flex items-center gap-1">
+                          <Zap size={10} /> AUTO ENTRADA / SALIDA
                         </span>
                       </h2>
-                      <p className="text-xs text-cero-text-muted">Enfoque su rostro al centro para autorizar acceso</p>
+                      <p className="text-xs text-cero-text-muted">Detecta automáticamente si el socio entra o sale según su registro actual</p>
                     </div>
                   </div>
 
-                  {/* Mode Selector: Entrada vs Salida */}
-                  <div className="flex items-center gap-2">
+                  {/* Mode Selector & Coach on Duty */}
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    {/* Coach on duty badge */}
+                    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-[#10161c] rounded-xl border border-cero-border text-xs">
+                      <Clock size={13} className="text-cero-lime" />
+                      <span className="text-cero-text-muted">Turno Actual:</span>
+                      <span className="text-white font-semibold">{getCoachAndShiftForTimestamp().coachName.split(' ')[1]}</span>
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-cero-lime/10 text-cero-lime">
+                        {getCoachAndShiftForTimestamp().shift}
+                      </span>
+                    </div>
+
+                    {/* Mode Selector: Auto vs Entrada vs Salida */}
                     <div className="flex bg-[#10161c] p-1 rounded-xl border border-cero-border">
                       <button
-                        onClick={() => setAccessType('Entrada')}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 ${
-                          accessType === 'Entrada' 
-                            ? 'bg-cero-lime text-black' 
+                        onClick={() => setAccessMode('Auto')}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                          accessMode === 'Auto' 
+                            ? 'bg-cero-lime text-black shadow-md' 
                             : 'text-cero-text-muted hover:text-white'
                         }`}
+                        title="Detección Automática: Registra Entrada si está fuera, Salida si está dentro"
                       >
-                        <LogIn size={14} /> ENTRADA (IN)
+                        <Zap size={13} className={accessMode === 'Auto' ? 'text-black fill-current' : 'text-cero-lime'} />
+                        AUTO
                       </button>
                       <button
-                        onClick={() => setAccessType('Salida')}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 ${
-                          accessType === 'Salida' 
-                            ? 'bg-cero-lime text-black' 
+                        onClick={() => setAccessMode('Entrada')}
+                        className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                          accessMode === 'Entrada' 
+                            ? 'bg-emerald-400 text-black' 
                             : 'text-cero-text-muted hover:text-white'
                         }`}
                       >
-                        <LogOut size={14} /> SALIDA (OUT)
+                        <LogIn size={13} /> IN
+                      </button>
+                      <button
+                        onClick={() => setAccessMode('Salida')}
+                        className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                          accessMode === 'Salida' 
+                            ? 'bg-cyan-400 text-black' 
+                            : 'text-cero-text-muted hover:text-white'
+                        }`}
+                      >
+                        <LogOut size={13} /> OUT
                       </button>
                     </div>
 
@@ -712,28 +754,40 @@ export default function AccessControl() {
                   </div>
 
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
-                    {members.slice(0, 3).map(member => (
-                      <button
-                        key={member.id}
-                        onClick={() => triggerFacialScan(member, parseFloat((96.5 + Math.random() * 3.0).toFixed(1)))}
-                        className="p-2 bg-[#10161c] hover:bg-[#1e293b] border border-cero-border hover:border-cero-lime/50 rounded-xl transition-all flex items-center gap-2.5 cursor-pointer text-left group"
-                        title={`Simular coincidencia exacta de ${member.fullName} (>95%)`}
-                      >
-                        <img 
-                          src={member.avatarUrl} 
-                          alt={member.fullName} 
-                          className="w-8 h-8 rounded-full object-cover border border-cero-border shrink-0" 
-                        />
-                        <div className="overflow-hidden">
-                          <p className="text-xs font-semibold text-white truncate group-hover:text-cero-lime transition-colors">
-                            {member.fullName.split(' ')[0]}
-                          </p>
-                          <p className="text-[10px] text-emerald-400 font-mono">
-                            {">"} 95% Match
-                          </p>
-                        </div>
-                      </button>
-                    ))}
+                    {members.slice(0, 3).map(member => {
+                      const isInside = biometricsStore.isMemberCurrentlyInside(member.id);
+                      return (
+                        <button
+                          key={member.id}
+                          onClick={() => triggerFacialScan(member, parseFloat((96.5 + Math.random() * 3.0).toFixed(1)))}
+                          className="p-2 bg-[#10161c] hover:bg-[#1e293b] border border-cero-border hover:border-cero-lime/50 rounded-xl transition-all flex items-center justify-between gap-2 cursor-pointer text-left group"
+                          title={`Simular paso de ${member.fullName} (${isInside ? 'Actualmente DENTRO -> Marcará SALIDA' : 'Actualmente FUERA -> Marcará ENTRADA'})`}
+                        >
+                          <div className="flex items-center gap-2 overflow-hidden">
+                            <img 
+                              src={member.avatarUrl} 
+                              alt={member.fullName} 
+                              className="w-8 h-8 rounded-full object-cover border border-cero-border shrink-0" 
+                            />
+                            <div className="overflow-hidden">
+                              <p className="text-xs font-semibold text-white truncate group-hover:text-cero-lime transition-colors">
+                                {member.fullName.split(' ')[0]}
+                              </p>
+                              <p className="text-[10px] text-emerald-400 font-mono">
+                                {">"} 95% Match
+                              </p>
+                            </div>
+                          </div>
+                          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider shrink-0 ${
+                            isInside 
+                              ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' 
+                              : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                          }`}>
+                            {isInside ? 'Dentro' : 'Fuera'}
+                          </span>
+                        </button>
+                      );
+                    })}
 
                     {/* Low confidence (< 95%) Test Button */}
                     <button
@@ -762,7 +816,9 @@ export default function AccessControl() {
               {scanResult && (
                 <div className={`p-6 rounded-2xl border shadow-xl transition-all animate-fadeIn ${
                   scanResult.success 
-                    ? 'bg-emerald-950/40 border-emerald-500/40' 
+                    ? scanResult.log.type === 'Entrada' 
+                      ? 'bg-emerald-950/40 border-emerald-500/40' 
+                      : 'bg-cyan-950/40 border-cyan-500/40'
                     : 'bg-rose-950/40 border-rose-500/40'
                 }`}>
                   <div className="flex flex-col sm:flex-row items-center gap-6">
@@ -773,7 +829,9 @@ export default function AccessControl() {
                         className="w-20 h-20 rounded-2xl object-cover border-2 border-white/20 shadow-md"
                       />
                       <div className={`absolute -bottom-2 -right-2 p-1.5 rounded-full ${
-                        scanResult.success ? 'bg-emerald-500 text-black' : 'bg-rose-500 text-white'
+                        scanResult.success 
+                          ? scanResult.log.type === 'Entrada' ? 'bg-emerald-500 text-black' : 'bg-cyan-400 text-black' 
+                          : 'bg-rose-500 text-white'
                       }`}>
                         {scanResult.success ? <CheckCircle2 size={18} /> : <XCircle size={18} />}
                       </div>
@@ -782,12 +840,14 @@ export default function AccessControl() {
                     <div className="flex-1 text-center sm:text-left space-y-1">
                       <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
                         <h3 className="text-xl font-bold text-white">{scanResult.log.memberName}</h3>
+                        
+                        {/* Type Badge: Entrada vs Salida */}
                         <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
-                          scanResult.success 
-                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' 
-                            : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                          scanResult.log.type === 'Entrada'
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                            : 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
                         }`}>
-                          {scanResult.log.status.toUpperCase()}
+                          {scanResult.log.type === 'Entrada' ? '✓ ENTRADA REGISTRADA' : '← SALIDA REGISTRADA'}
                         </span>
                         
                         {/* Similarity Score Pill */}
@@ -800,17 +860,30 @@ export default function AccessControl() {
                         </span>
                       </div>
 
-                      <p className="text-xs text-gray-300 font-mono">
-                        ID: {scanResult.log.memberId} • Plan: {scanResult.log.planType} • {scanResult.log.type} ({scanResult.log.timeFormatted})
-                      </p>
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-gray-300 font-mono">
+                        <span>{scanResult.log.dateFormatted || new Date().toLocaleDateString('es-MX')} • {scanResult.log.timeFormatted}</span>
+                        <span>• Plan: {scanResult.log.planType}</span>
+                        {scanResult.log.coachOnDuty && (
+                          <span className="text-cero-lime bg-cero-lime/10 px-2 py-0.5 rounded border border-cero-lime/20">
+                            {scanResult.log.coachOnDuty} ({scanResult.log.shift})
+                          </span>
+                        )}
+                        {scanResult.log.durationMinutes && (
+                          <span className="text-cyan-300 bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20">
+                            ⏱️ Estadía: {scanResult.log.durationMinutes >= 60 ? `${Math.floor(scanResult.log.durationMinutes / 60)}h ${scanResult.log.durationMinutes % 60}m` : `${scanResult.log.durationMinutes} min`}
+                          </span>
+                        )}
+                      </div>
 
                       <p className={`text-sm font-medium ${
-                        scanResult.success ? 'text-emerald-400' : 'text-rose-400'
+                        scanResult.success 
+                          ? scanResult.log.type === 'Entrada' ? 'text-emerald-400' : 'text-cyan-400' 
+                          : 'text-rose-400'
                       }`}>
                         {scanResult.log.reason}
                       </p>
 
-                      {scanResult.success && rewardNotice && (
+                      {scanResult.success && scanResult.log.type === 'Entrada' && rewardNotice && (
                         <div className="mt-2 inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-cero-lime/10 border border-cero-lime/30 text-xs font-semibold text-cero-lime">
                           <Wallet size={14} className="shrink-0" />
                           <span>
@@ -825,14 +898,18 @@ export default function AccessControl() {
                     <div className="text-center sm:text-right shrink-0">
                       <div className="flex items-center justify-center sm:justify-end gap-1.5 mb-1">
                         {scanResult.success ? (
-                          <Unlock size={20} className="text-emerald-400" />
+                          <Unlock size={20} className={scanResult.log.type === 'Entrada' ? 'text-emerald-400' : 'text-cyan-400'} />
                         ) : (
                           <Lock size={20} className="text-rose-400" />
                         )}
                         <span className={`text-xl font-black ${
-                          scanResult.success ? 'text-emerald-400' : 'text-rose-400'
+                          scanResult.success 
+                            ? scanResult.log.type === 'Entrada' ? 'text-emerald-400' : 'text-cyan-400' 
+                            : 'text-rose-400'
                         }`}>
-                          {scanResult.success ? 'ACCESO AUTORIZADO' : 'ACCESO DENEGADO'}
+                          {scanResult.success 
+                            ? (scanResult.log.type === 'Entrada' ? 'ACCESO AUTORIZADO' : 'SALIDA AUTORIZADA') 
+                            : 'ACCESO DENEGADO'}
                         </span>
                       </div>
                       <span className="text-[11px] text-cero-text-muted">
@@ -851,7 +928,7 @@ export default function AccessControl() {
                 <div className="flex justify-between items-center mb-5 pb-3 border-b border-cero-border">
                   <div className="flex items-center gap-2.5">
                     <History size={20} className="text-cero-lime" />
-                    <h3 className="text-lg font-bold text-white">Registro en Vivo</h3>
+                    <h3 className="text-lg font-bold text-white">Registro de Asistencias en Vivo</h3>
                   </div>
                   <button 
                     onClick={() => biometricsStore.clearLogs()}
@@ -882,23 +959,28 @@ export default function AccessControl() {
                           <div className="min-w-0">
                             <p className="text-sm font-semibold text-white truncate">{log.memberName}</p>
                             <p className="text-xs text-cero-text-muted truncate font-mono">
-                              {log.timeFormatted} • {log.planType}
+                              {log.dateFormatted || 'Hoy'} • {log.timeFormatted} • {log.planType}
                             </p>
-                            <span className={`text-[10px] font-mono font-bold ${
-                              log.similarity >= 95.0 ? 'text-emerald-400' : 'text-rose-400'
-                            }`}>
-                              Similitud: {log.similarity}%
-                            </span>
+                            <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                              <span className="text-[10px] text-cero-text-muted font-mono">
+                                Coach: {log.coachOnDuty ? log.coachOnDuty.replace('Coach ', '') : 'En Turno'} ({log.shift || 'General'})
+                              </span>
+                              {log.durationMinutes && (
+                                <span className="text-[10px] text-cyan-300 font-mono bg-cyan-500/10 px-1.5 py-0.2 rounded">
+                                  ⏱️ {log.durationMinutes >= 60 ? `${Math.floor(log.durationMinutes / 60)}h ${log.durationMinutes % 60}m` : `${log.durationMinutes}m`}
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
 
                         <div className="flex items-center gap-2 shrink-0">
-                          <span className={`px-2 py-1 rounded text-xs font-bold ${
+                          <span className={`px-2.5 py-1 rounded-lg text-xs font-bold ${
                             log.type === 'Entrada'
-                              ? 'bg-cero-lime/10 text-cero-lime border border-cero-lime/20'
-                              : 'bg-gray-500/10 text-gray-300 border border-gray-500/20'
+                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                              : 'bg-cyan-500/10 text-cyan-300 border border-cyan-500/20'
                           }`}>
-                            {log.type === 'Entrada' ? 'IN' : 'OUT'}
+                            {log.type === 'Entrada' ? 'ENTRADA' : 'SALIDA'}
                           </span>
 
                           <span className={`w-2.5 h-2.5 rounded-full ${
